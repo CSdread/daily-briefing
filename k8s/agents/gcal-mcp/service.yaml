@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gcal-mcp
+  namespace: agents
+  labels:
+    app: gcal-mcp
+    type: mcp-server
+spec:
+  type: ClusterIP
+  selector:
+    app: gcal-mcp
+  ports:
+    - port: 3001
+      targetPort: 3001
+      name: sse

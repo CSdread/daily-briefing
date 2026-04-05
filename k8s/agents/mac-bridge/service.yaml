@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mac-bridge
+  namespace: agents
+  labels:
+    app: mac-bridge
+    type: external-bridge
+  annotations:
+    # Update externalName to match the Mac mini's actual static IP
+    # or hostname if DNS resolves on the local network
+    note: "Update externalName to Mac mini static IP before deploying"
+spec:
+  type: ExternalName
+  # Replace with the Mac mini's static IP or local hostname
+  externalName: 192.168.1.200
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: sse

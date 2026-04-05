@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gmail-mcp
+  namespace: agents
+  labels:
+    app: gmail-mcp
+    type: mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gmail-mcp
+  template:
+    metadata:
+      labels:
+        app: gmail-mcp
+        type: mcp-server
+    spec:
+      containers:
+        - name: gmail-mcp
+          image: csdread/gmail-mcp:1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: sse
+          env:
+            - name: PORT
+              value: "3000"
+            - name: TZ
+              value: America/Denver
+          volumeMounts:
+            - name: oauth-credentials
+              mountPath: /oauth
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: oauth-credentials
+          secret:
+            secretName: gmail-oauth

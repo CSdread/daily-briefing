@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# OAuth tokens and credentials — NEVER commit these
+credentials.json
+token.json
+*-token.json
+*.pem
+*.key
+
+# Secrets
+secrets.yaml
+*-secret.yaml
+.env
+.env.*
+
+# Docker
+.dockerignore
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp

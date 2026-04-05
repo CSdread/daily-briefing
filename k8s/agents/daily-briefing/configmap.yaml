@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: daily-briefing-config
+  namespace: agents
+  labels:
+    app: daily-briefing
+data:
+  # Update by running:
+  # kubectl create configmap daily-briefing-config \
+  #   --from-file=AGENT.md=prompts/daily-briefing/AGENT.md \
+  #   --from-file=mcp.json=k8s/agents/daily-briefing/mcp.json \
+  #   -n agents --dry-run=client -o yaml | kubectl apply -f -
+  AGENT.md: |
+    # Daily Briefing Agent
+
+    You are a personal assistant preparing a daily briefing for Daniel.
+    Today is {{ TODAY }}.
+
+    See the full prompt in prompts/daily-briefing/AGENT.md.
+    Replace this ConfigMap with the real prompt before deploying.
+
+  mcp.json: |
+    {
+      "mcpServers": {
+        "home-assistant": {
+          "url": "http://ha-mcp.mcp.svc.cluster.local:8086/sse"
+        },
+        "gmail": {
+          "url": "http://gmail-mcp.agents.svc.cluster.local:3000/sse"
+        },
+        "google-calendar": {
+          "url": "http://gcal-mcp.agents.svc.cluster.local:3001/sse"
+        },
+        "mac-bridge": {
+          "url": "http://mac-bridge.agents.svc.cluster.local:4000/sse"
+        }
+      }
+    }
