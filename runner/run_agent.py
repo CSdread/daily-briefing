@@ -203,6 +203,38 @@ def truncate_tool_result(result: str) -> str:
     return truncated + f"\n... [truncated — {len(result) - TOOL_RESULT_MAX_CHARS} chars omitted]"
 
 
+def compact_messages(messages: list, keep_recent: int = 2) -> list:
+    """Replace tool result content in older turns with a short placeholder.
+
+    Keeps the last `keep_recent` tool-result exchanges at full fidelity so the
+    model retains recent context. Older exchanges are collapsed to a one-liner
+    so their tool_use_id references remain valid without burning tokens.
+    """
+    # Indices of user messages that carry tool_result blocks
+    tr_indices = [
+        i for i, m in enumerate(messages)
+        if m["role"] == "user"
+        and isinstance(m["content"], list)
+        and any(isinstance(c, dict) and c.get("type") == "tool_result" for c in m["content"])
+    ]
+    to_compact = tr_indices[:-keep_recent] if len(tr_indices) > keep_recent else []
+    for idx in to_compact:
+        messages[idx] = {
+            **messages[idx],
+            "content": [
+                (
+                    {"type": "tool_result", "tool_use_id": c["tool_use_id"], "content": "[compacted]"}
+                    if isinstance(c, dict) and c.get("type") == "tool_result"
+                    else c
+                )
+                for c in messages[idx]["content"]
+            ],
+        }
+    if to_compact:
+        log.debug("Compacted %d old tool-result exchange(s)", len(to_compact))
+    return messages
+
+
 async def run_agent() -> None:
     prompt = load_agent_prompt()
     mcp_config = load_mcp_config()
@@ -222,6 +254,7 @@ async def run_agent() -> None:
             log.info("Waiting %ss before next API call", TURN_DELAY)
             await asyncio.sleep(TURN_DELAY)
 
+        messages = compact_messages(messages)
         kwargs: dict[str, Any] = {
             "model": MODEL,
             "max_tokens": MAX_TOKENS,
