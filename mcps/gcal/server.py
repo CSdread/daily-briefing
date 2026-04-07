@@ -20,6 +20,9 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+MOUNTAIN = ZoneInfo("America/Denver")
 
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
@@ -73,23 +76,30 @@ def format_event(event: dict) -> str:
     start = event.get("start", {})
     end = event.get("end", {})
 
-    start_str = start.get("dateTime", start.get("date", "Unknown"))
-    end_str = end.get("dateTime", end.get("date", "Unknown"))
+    start_raw = start.get("dateTime", start.get("date", "Unknown"))
+    end_raw = end.get("dateTime", end.get("date", "Unknown"))
 
-    # Simplify datetime display
-    if "T" in start_str:
+    # Convert to Mountain Time and include the full date so the caller
+    # can unambiguously assign events to the correct local day.
+    # Late-evening MT events cross midnight UTC — showing only the time
+    # caused misassignment when the agent grouped by UTC date.
+    if "T" in start_raw:
         try:
-            dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-            start_str = dt.strftime("%-I:%M %p")
+            dt = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).astimezone(MOUNTAIN)
+            start_str = dt.strftime("%Y-%m-%d %-I:%M %p MT")
         except Exception:
-            pass
+            start_str = start_raw
+    else:
+        start_str = start_raw  # all-day event, already a date string
 
-    if "T" in end_str:
+    if "T" in end_raw:
         try:
-            dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-            end_str = dt.strftime("%-I:%M %p")
+            dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00")).astimezone(MOUNTAIN)
+            end_str = dt.strftime("%-I:%M %p MT")
         except Exception:
-            pass
+            end_str = end_raw
+    else:
+        end_str = end_raw
 
     attendees = event.get("attendees", [])
     attendee_str = ""

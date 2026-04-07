@@ -18,12 +18,13 @@ Be efficient with tool calls. Prefer searches that return multiple items at once
 
 ### 1. Google Calendar
 
-Get events for today and the next two days using **three separate `gcal_list_events` calls**, one per day:
-- **Today** (`{{ DATE }}`): `time_min: "{{ DATE }}T00:00:00-07:00"`, `time_max: "{{ DATE }}T23:59:59-07:00"`
-- **Tomorrow**: compute tomorrow's date from `{{ DATE }}` and use its exact `T00:00:00` – `T23:59:59` bounds
-- **Day after tomorrow**: same pattern for that date
+Get events for today and the next two days using **three separate `gcal_list_events` calls**, one per day. Mountain Time uses MDT (UTC-6) from mid-March through early November, and MST (UTC-7) otherwise. Today is {{ TODAY }}, so use the correct offset for this time of year.
 
-Always label each day's events with the actual day name and date (e.g., "Monday, April 7") in the email. Do not group events from different days together — each day must appear under its own clearly labeled heading.
+- **Today** (`{{ DATE }}`): `time_min: "{{ DATE }}T00:00:00-06:00"`, `time_max: "{{ DATE }}T23:59:59-06:00"`
+- **Tomorrow**: increment the date by one day and use `T00:00:00-06:00` – `T23:59:59-06:00`
+- **Day after tomorrow**: same pattern
+
+Each event in the results includes a full Mountain Time date (`YYYY-MM-DD HH:MM AM/PM MT`). **Always assign events to the day matching the MT date in the event output**, not the date you queried. Do not group events from different days together — each day must appear under its own clearly labeled heading (e.g., "Tuesday, April 7 — Today").
 
 - Note any multi-person meetings, appointments with locations, or events with prep requirements
 - Birthdays are important as well and need to be noted and listed in a separate section
