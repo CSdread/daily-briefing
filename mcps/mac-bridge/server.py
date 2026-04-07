@@ -40,10 +40,9 @@ import caldav
 from icalendar import Calendar
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import TextContent, Tool
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
+from starlette.responses import JSONResponse, Response
 import uvicorn
 
 PORT = int(os.environ.get("PORT", "4000"))
@@ -417,34 +416,44 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 # ── HTTP / SSE transport ──────────────────────────────────────────────────────
 
-sse_transport = SseServerTransport("/message")
+# Disable DNS rebinding protection — this server is LAN/cluster-only and not
+# internet-exposed. The default allowed_hosts=[] would reject all requests.
+sse_transport = SseServerTransport(
+    "/message",
+    security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 
-async def handle_sse_mount(scope, receive, send):
-    # Mounted at /sse — Starlette strips that prefix before calling us, so:
-    #   GET  /sse  or /sse/   → scope["path"] == "/" → open SSE connection
-    #   POST /sse/message?... → scope["path"] == "/message" → forward to message handler
-    #
-    # mcp 1.x sends the message endpoint as a relative URL ("message"), which
-    # the client resolves against the SSE base URL (/sse/) → /sse/message.
-    # Both cases must be handled inside this single mount.
-    if scope.get("path", "/").startswith("/message"):
+async def app(scope, receive, send):
+    """Pure ASGI app — bypasses Starlette routing to avoid Starlette 1.0
+    path-stripping surprises with Mount. Routes by path and method directly."""
+    if scope["type"] == "lifespan":
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif message["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+
+    if scope["type"] != "http":
+        return
+
+    path = scope["path"]
+    method = scope.get("method", "GET")
+
+    if path == "/health":
+        await JSONResponse({"status": "ok", "server": "mac-bridge"})(scope, receive, send)
+    elif method == "POST":
+        # MCP client posting a message — only POSTs this server receives are
+        # session messages, regardless of what path the transport advertises.
         await sse_transport.handle_post_message(scope, receive, send)
-    else:
+    elif path.startswith("/sse"):
+        # MCP client opening the SSE stream
         async with sse_transport.connect_sse(scope, receive, send) as streams:
             await server.run(streams[0], streams[1], server.create_initialization_options())
-
-
-async def handle_health(request):
-    return JSONResponse({"status": "ok", "server": "mac-bridge"})
-
-
-app = Starlette(
-    routes=[
-        Mount("/sse", app=handle_sse_mount),
-        Route("/health", endpoint=handle_health),
-    ]
-)
+    else:
+        await Response("Not Found", status_code=404)(scope, receive, send)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=PORT)
