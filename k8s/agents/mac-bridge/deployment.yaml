@@ -1,11 +1,12 @@
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
   name: mac-bridge
   namespace: agents
   labels:
     app: mac-bridge
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: mac-bridge
@@ -14,10 +15,15 @@ spec:
       labels:
         app: mac-bridge
     spec:
-      # Pin to nodes labeled  mac-bridge=true
+      # Pin to nodes labeled mac-bridge=true
       # Apply with: kubectl label node <node-name> mac-bridge=true
       nodeSelector:
         mac-bridge: "true"
+      # Tolerate the taint applied to Mac nodes
+      # Apply with: kubectl taint node <node-name> mac-os-x=true:NoSchedule
+      tolerations:
+        - key: "mac-os-x"
+          operator: "Exists"
       containers:
         - name: mac-bridge
           image: csdread/mac-bridge:1

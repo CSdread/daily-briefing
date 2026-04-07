@@ -137,7 +137,7 @@ restart-gcal:
 	kubectl rollout restart deployment/gcal-mcp -n $(NAMESPACE)
 
 restart-mac-bridge:
-	kubectl rollout restart daemonset/mac-bridge -n $(NAMESPACE)
+	kubectl rollout restart deployment/mac-bridge -n $(NAMESPACE)
 
 restart-mcps: restart-gmail restart-gcal restart-mac-bridge
 
