@@ -131,10 +131,13 @@ async def discover_mcp_tools(mcp_config: dict) -> tuple[list[dict], dict[str, di
 
     for server_name, server_config in mcp_config.get("mcpServers", {}).items():
         log.info("Connecting to MCP server: %s at %s", server_name, server_config["url"])
+        whitelist = set(server_config["tools"]) if "tools" in server_config else None
         try:
             async with mcp_client(server_config) as session:
                 response = await session.list_tools()
                 for tool in response.tools:
+                    if whitelist and tool.name not in whitelist:
+                        continue
                     anthropic_tool = mcp_tool_to_anthropic(tool)
                     all_tools.append(anthropic_tool)
                     tool_server_map[tool.name] = server_config
