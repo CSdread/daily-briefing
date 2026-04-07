@@ -5,15 +5,27 @@ metadata:
   namespace: agents
   labels:
     app: mac-bridge
-    type: external-bridge
-  annotations:
-    # Update externalName to match the Mac mini's actual static IP
-    # or hostname if DNS resolves on the local network
-    note: "Update externalName to Mac mini static IP before deploying"
 spec:
-  type: ExternalName
-  # Replace with the Mac mini's static IP or local hostname
-  externalName: 192.168.1.200
+  # ClusterIP service targeting the mac-bridge DaemonSet pod(s).
+  # Used when mac-bridge runs as a container on a Mac k8s node (daemonset.yaml).
+  #
+  # --- Native mode alternative ---
+  # If running mac-bridge natively on the Mac mini instead (launchd, not k8s),
+  # replace this Service with an ExternalName pointing to the Mac mini's IP:
+  #
+  # spec:
+  #   type: ExternalName
+  #   externalName: 192.168.1.200   # Mac mini static IP
+  #   ports:
+  #     - port: 4000
+  #       targetPort: 4000
+  #       name: sse
+  #
+  # Either way the in-cluster DNS name stays the same:
+  #   http://mac-bridge.agents.svc.cluster.local:4000/sse
+  type: ClusterIP
+  selector:
+    app: mac-bridge
   ports:
     - port: 4000
       targetPort: 4000

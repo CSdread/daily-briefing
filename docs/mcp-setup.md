@@ -130,15 +130,89 @@ kubectl rollout status deployment/gcal-mcp -n agents
 
 ---
 
-## Mac Mini Bridge (Phase 5)
+## Mac Bridge
 
-See `docs/mac-mini-bridge.md` for the full setup guide.
+Provides iMessages (via SQLite) and Reminders (via iCloud CalDAV) as MCP tools on port 4000.
+Two deployment modes share the same `server.py`.
 
-Quick summary:
-- Runs Python MCP server on Mac mini at port 4000
-- Provides iMessage and Reminders tools
-- Kubernetes ExternalName service points to Mac mini IP
-- Requires Mac mini to be on local network with static IP
+### Prerequisites
+
+- **iCloud app-specific password** — generate at [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords
+- **Full Disk Access** for the Python process (native mode) or container runtime — required to read `~/Library/Messages/chat.db`
+
+### Mode A: Container on a Mac k8s node (recommended)
+
+**1. Label the Mac k8s node:**
+```bash
+kubectl label node <mac-node-name> mac-bridge=true
+```
+
+**2. Create the iCloud secret:**
+```bash
+kubectl create secret generic icloud-credentials \
+  --from-literal=apple_id=your-apple-id@example.com \
+  --from-literal=app_password=xxxx-xxxx-xxxx-xxxx \
+  -n agents
+```
+
+**3. Update the hostPath in `k8s/agents/mac-bridge/daemonset.yaml`:**
+Set the `path` under `volumes[messages-db]` to match the Mac node's actual username:
+```yaml
+hostPath:
+  path: /Users/<actual-username>/Library/Messages
+```
+
+**4. Build, push, and deploy:**
+```bash
+make release-mac-bridge
+kubectl apply -f k8s/agents/mac-bridge/
+```
+
+**5. Verify:**
+```bash
+kubectl get pods -n agents -l app=mac-bridge
+kubectl logs -n agents daemonset/mac-bridge
+kubectl run -n agents debug --rm -it --image=curlimages/curl -- \
+  curl http://mac-bridge.agents.svc.cluster.local:4000/health
+```
+
+### Mode B: Native on the Mac mini (launchd)
+
+**1. Copy server files to the Mac mini:**
+```bash
+scp -r mcps/mac-bridge/ username@mac-mini.local:~/agents-bridge/
+```
+
+**2. Install dependencies:**
+```bash
+cd ~/agents-bridge/
+pip3 install -r requirements.txt
+```
+
+**3. Configure and install the launchd plist:**
+```bash
+cp com.agents.mac-bridge.plist.template \
+   ~/Library/LaunchAgents/com.agents.mac-bridge.plist
+# Edit the plist — fill in USERNAME and iCloud credentials
+nano ~/Library/LaunchAgents/com.agents.mac-bridge.plist
+
+launchctl load ~/Library/LaunchAgents/com.agents.mac-bridge.plist
+launchctl start com.agents.mac-bridge
+```
+
+**4. Update the k8s service to ExternalName** (in-cluster traffic → Mac mini IP):
+```bash
+# Edit k8s/agents/mac-bridge/service.yaml — follow the comment in that file
+kubectl apply -f k8s/agents/mac-bridge/service.yaml
+```
+
+**5. Verify:**
+```bash
+curl http://localhost:4000/health
+# From inside cluster:
+kubectl run -n agents debug --rm -it --image=curlimages/curl -- \
+  curl http://mac-bridge.agents.svc.cluster.local:4000/health
+```
 
 ---
 

@@ -80,7 +80,25 @@ Referenced in CronJob as env var `BRIEFING_EMAIL`.
 
 ---
 
-### 5. Home Assistant MCP Token (optional override)
+### 5. iCloud Credentials (Mac Bridge)
+
+Required for the Reminders tools in the Mac Bridge MCP server.
+Generate an **app-specific password** at [appleid.apple.com](https://appleid.apple.com) — do not use your regular Apple ID password.
+
+```bash
+kubectl create secret generic icloud-credentials \
+  --from-literal=apple_id=your-apple-id@example.com \
+  --from-literal=app_password=xxxx-xxxx-xxxx-xxxx \
+  -n agents
+```
+
+Referenced in the mac-bridge DaemonSet as env vars `ICLOUD_APPLE_ID` and `ICLOUD_APP_PASSWORD`.
+
+For the native (launchd) mode, set these directly in `com.agents.mac-bridge.plist`.
+
+---
+
+### 6. Home Assistant MCP Token (optional override)
 
 The existing HA MCP in the `mcp` namespace uses its own token. If a separate read-only HA token is desired for the agents:
 

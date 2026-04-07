@@ -1,19 +1,21 @@
 REGISTRY   := csdread
 NAMESPACE  := agents
 
-RUNNER_IMAGE  := $(REGISTRY)/agent-runner
-GMAIL_IMAGE   := $(REGISTRY)/gmail-mcp
-GCAL_IMAGE    := $(REGISTRY)/gcal-mcp
+RUNNER_IMAGE      := $(REGISTRY)/agent-runner
+GMAIL_IMAGE       := $(REGISTRY)/gmail-mcp
+GCAL_IMAGE        := $(REGISTRY)/gcal-mcp
+MAC_BRIDGE_IMAGE  := $(REGISTRY)/mac-bridge
 
-RUNNER_TAG    ?= 3
-GMAIL_TAG     ?= 2
-GCAL_TAG      ?= 2
+RUNNER_TAG        ?= 3
+GMAIL_TAG         ?= 2
+GCAL_TAG          ?= 2
+MAC_BRIDGE_TAG    ?= 1
 
 # ─── Build ───────────────────────────────────────────────────────────────────
 
-.PHONY: build build-runner build-gmail build-gcal
+.PHONY: build build-runner build-gmail build-gcal build-mac-bridge
 
-build: build-runner build-gmail build-gcal
+build: build-runner build-gmail build-gcal build-mac-bridge
 
 build-runner:
 	docker build -t $(RUNNER_IMAGE):$(RUNNER_TAG) runner/
@@ -24,11 +26,14 @@ build-gmail:
 build-gcal:
 	docker build -t $(GCAL_IMAGE):$(GCAL_TAG) mcps/gcal/
 
+build-mac-bridge:
+	docker build -t $(MAC_BRIDGE_IMAGE):$(MAC_BRIDGE_TAG) mcps/mac-bridge/
+
 # ─── Push ────────────────────────────────────────────────────────────────────
 
-.PHONY: push push-runner push-gmail push-gcal
+.PHONY: push push-runner push-gmail push-gcal push-mac-bridge
 
-push: push-runner push-gmail push-gcal
+push: push-runner push-gmail push-gcal push-mac-bridge
 
 push-runner:
 	docker push $(RUNNER_IMAGE):$(RUNNER_TAG)
@@ -39,9 +44,12 @@ push-gmail:
 push-gcal:
 	docker push $(GCAL_IMAGE):$(GCAL_TAG)
 
+push-mac-bridge:
+	docker push $(MAC_BRIDGE_IMAGE):$(MAC_BRIDGE_TAG)
+
 # ─── Build + Push combined ───────────────────────────────────────────────────
 
-.PHONY: release release-runner release-gmail release-gcal
+.PHONY: release release-runner release-gmail release-gcal release-mac-bridge
 
 release: build push
 
@@ -50,6 +58,8 @@ release-runner: build-runner push-runner
 release-gmail: build-gmail push-gmail
 
 release-gcal: build-gcal push-gcal
+
+release-mac-bridge: build-mac-bridge push-mac-bridge
 
 # ─── Deploy ──────────────────────────────────────────────────────────────────
 
@@ -80,11 +90,11 @@ update-config:
 		--from-file=AGENT.md=prompts/daily-briefing/AGENT.md \
 		--from-file=mcp.json=k8s/agents/daily-briefing/mcp.json \
 		-n $(NAMESPACE) \
-		--dry-run -o yaml | kubectl apply -f -
+		--dry-run=client -o yaml | kubectl apply -f -
 
 # ─── Manual job trigger ───────────────────────────────────────────────────────
 
-.PHONY: run run-clean
+.PHONY: run run-once
 
 # Delete existing manual job and reapply (keeps a single persistent manual job)
 run:
@@ -118,7 +128,7 @@ status:
 
 # ─── Rollout restarts (after pushing new images) ──────────────────────────────
 
-.PHONY: restart-mcps restart-gmail restart-gcal
+.PHONY: restart-mcps restart-gmail restart-gcal restart-mac-bridge
 
 restart-gmail:
 	kubectl rollout restart deployment/gmail-mcp -n $(NAMESPACE)
@@ -126,7 +136,10 @@ restart-gmail:
 restart-gcal:
 	kubectl rollout restart deployment/gcal-mcp -n $(NAMESPACE)
 
-restart-mcps: restart-gmail restart-gcal
+restart-mac-bridge:
+	kubectl rollout restart daemonset/mac-bridge -n $(NAMESPACE)
+
+restart-mcps: restart-gmail restart-gcal restart-mac-bridge
 
 # ─── Help ─────────────────────────────────────────────────────────────────────
 
@@ -136,31 +149,34 @@ help:
 	@echo "Usage: make [target] [VAR=value]"
 	@echo ""
 	@echo "Build"
-	@echo "  build              Build all images"
-	@echo "  build-runner       Build agent-runner image"
-	@echo "  build-gmail        Build gmail-mcp image"
-	@echo "  build-gcal         Build gcal-mcp image"
+	@echo "  build                Build all images"
+	@echo "  build-runner         Build agent-runner image"
+	@echo "  build-gmail          Build gmail-mcp image"
+	@echo "  build-gcal           Build gcal-mcp image"
+	@echo "  build-mac-bridge     Build mac-bridge image"
 	@echo ""
 	@echo "Push"
-	@echo "  push               Push all images"
-	@echo "  push-runner        Push agent-runner image"
+	@echo "  push                 Push all images"
+	@echo "  push-mac-bridge      Push mac-bridge image"
 	@echo ""
 	@echo "Release (build + push)"
-	@echo "  release            Build and push all images"
-	@echo "  release-runner     Build and push agent-runner only"
+	@echo "  release              Build and push all images"
+	@echo "  release-runner       Build and push agent-runner only"
+	@echo "  release-mac-bridge   Build and push mac-bridge only"
 	@echo ""
 	@echo "Deploy"
-	@echo "  deploy-all         Deploy everything (ns, rbac, mcps, config, cronjob)"
-	@echo "  deploy-briefing    Apply cronjob.yaml only"
-	@echo "  update-config      Reload AGENT.md + mcp.json into ConfigMap"
+	@echo "  deploy-all           Deploy everything (ns, rbac, mcps, config, cronjob)"
+	@echo "  deploy-briefing      Apply cronjob.yaml only"
+	@echo "  update-config        Reload AGENT.md + mcp.json into ConfigMap"
 	@echo ""
 	@echo "Run"
-	@echo "  run                Delete + reapply job-manual.yaml"
-	@echo "  run-once           Start a new uniquely-named job (keeps history)"
-	@echo "  logs               Follow logs from briefing-manual job"
-	@echo "  status             Show cronjobs, jobs, and pods"
+	@echo "  run                  Delete + reapply job-manual.yaml"
+	@echo "  run-once             Start a new uniquely-named job (keeps history)"
+	@echo "  logs                 Follow logs from briefing-manual job"
+	@echo "  status               Show cronjobs, jobs, and pods"
 	@echo ""
 	@echo "Variables"
-	@echo "  RUNNER_TAG=N       Override agent-runner image tag (default: $(RUNNER_TAG))"
-	@echo "  GMAIL_TAG=N        Override gmail-mcp image tag (default: $(GMAIL_TAG))"
-	@echo "  GCAL_TAG=N         Override gcal-mcp image tag (default: $(GCAL_TAG))"
+	@echo "  RUNNER_TAG=N         Override agent-runner image tag (default: $(RUNNER_TAG))"
+	@echo "  GMAIL_TAG=N          Override gmail-mcp image tag (default: $(GMAIL_TAG))"
+	@echo "  GCAL_TAG=N           Override gcal-mcp image tag (default: $(GCAL_TAG))"
+	@echo "  MAC_BRIDGE_TAG=N     Override mac-bridge image tag (default: $(MAC_BRIDGE_TAG))"

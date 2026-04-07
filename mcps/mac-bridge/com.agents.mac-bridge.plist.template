@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd service for the Mac Bridge MCP server (native mode).
+
+  Setup:
+    1. Copy this file to ~/Library/LaunchAgents/com.agents.mac-bridge.plist
+    2. Replace USERNAME and fill in your iCloud credentials below
+    3. Load:
+         launchctl load ~/Library/LaunchAgents/com.agents.mac-bridge.plist
+         launchctl start com.agents.mac-bridge
+    4. Verify:
+         curl http://localhost:4000/health
+
+  Grant permissions (one-time, macOS will prompt on first run):
+    - System Settings → Privacy & Security → Full Disk Access → add Terminal / Python
+    - System Settings → Privacy & Security → Automation → allow Terminal to control Reminders
+      (not needed for CalDAV mode, but may be needed if switching to AppleScript)
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agents.mac-bridge</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Update path if Python is installed elsewhere -->
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/USERNAME/agents-bridge/server.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>4000</string>
+        <!-- iCloud CalDAV credentials -->
+        <key>ICLOUD_APPLE_ID</key>
+        <string>your-apple-id@example.com</string>
+        <!-- App-specific password from appleid.apple.com — NOT your Apple ID password -->
+        <key>ICLOUD_APP_PASSWORD</key>
+        <string>xxxx-xxxx-xxxx-xxxx</string>
+        <!-- Optional: override chat.db path if non-standard -->
+        <!-- <key>MESSAGES_DB</key> -->
+        <!-- <string>/Users/USERNAME/Library/Messages/chat.db</string> -->
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/USERNAME/agents-bridge</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/USERNAME/agents-bridge/bridge.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/USERNAME/agents-bridge/bridge-error.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

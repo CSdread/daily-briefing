@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mac-bridge
+  namespace: agents
+  labels:
+    app: mac-bridge
+spec:
+  selector:
+    matchLabels:
+      app: mac-bridge
+  template:
+    metadata:
+      labels:
+        app: mac-bridge
+    spec:
+      # Pin to nodes labeled  mac-bridge=true
+      # Apply with: kubectl label node <node-name> mac-bridge=true
+      nodeSelector:
+        mac-bridge: "true"
+      containers:
+        - name: mac-bridge
+          image: csdread/mac-bridge:1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4000
+              name: sse
+          env:
+            - name: PORT
+              value: "4000"
+            - name: ICLOUD_APPLE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: icloud-credentials
+                  key: apple_id
+            - name: ICLOUD_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: icloud-credentials
+                  key: app_password
+            # chat.db is mounted from the host at /messages/chat.db
+            - name: MESSAGES_DB
+              value: /messages/chat.db
+          volumeMounts:
+            - name: messages-db
+              mountPath: /messages
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: messages-db
+          hostPath:
+            # Update to match the Mac node's actual username
+            path: /Users/danielfeinberg/Library/Messages
+            type: Directory
