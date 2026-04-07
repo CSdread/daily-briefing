@@ -420,12 +420,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 sse_transport = SseServerTransport("/message")
 
 
-async def handle_sse(scope, receive, send):
-    # Raw ASGI callable — Starlette 1.0 Route expects a Response return value,
-    # but SSE owns the full HTTP lifecycle itself. Use Mount (not Route) so
-    # Starlette passes (scope, receive, send) directly without wrapping.
-    async with sse_transport.connect_sse(scope, receive, send) as streams:
-        await server.run(streams[0], streams[1], server.create_initialization_options())
+async def handle_sse_mount(scope, receive, send):
+    # Mounted at /sse — Starlette strips that prefix before calling us, so:
+    #   GET  /sse  or /sse/   → scope["path"] == "/" → open SSE connection
+    #   POST /sse/message?... → scope["path"] == "/message" → forward to message handler
+    #
+    # mcp 1.x sends the message endpoint as a relative URL ("message"), which
+    # the client resolves against the SSE base URL (/sse/) → /sse/message.
+    # Both cases must be handled inside this single mount.
+    if scope.get("path", "/").startswith("/message"):
+        await sse_transport.handle_post_message(scope, receive, send)
+    else:
+        async with sse_transport.connect_sse(scope, receive, send) as streams:
+            await server.run(streams[0], streams[1], server.create_initialization_options())
 
 
 async def handle_health(request):
@@ -434,8 +441,7 @@ async def handle_health(request):
 
 app = Starlette(
     routes=[
-        Mount("/sse", app=handle_sse),
-        Mount("/message", app=sse_transport.handle_post_message),
+        Mount("/sse", app=handle_sse_mount),
         Route("/health", endpoint=handle_health),
     ]
 )
