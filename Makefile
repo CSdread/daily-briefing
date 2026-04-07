@@ -5,9 +5,9 @@ RUNNER_IMAGE  := $(REGISTRY)/agent-runner
 GMAIL_IMAGE   := $(REGISTRY)/gmail-mcp
 GCAL_IMAGE    := $(REGISTRY)/gcal-mcp
 
-RUNNER_TAG    ?= 2
+RUNNER_TAG    ?= 3
 GMAIL_TAG     ?= 2
-GCAL_TAG      ?= 1
+GCAL_TAG      ?= 2
 
 # ─── Build ───────────────────────────────────────────────────────────────────
 

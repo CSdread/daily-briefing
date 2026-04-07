@@ -20,8 +20,8 @@ Be efficient with tool calls. Prefer searches that return multiple items at once
 
 Get events for today and the next two days using **three separate `gcal_list_events` calls**, one per day. Mountain Time uses MDT (UTC-6) from mid-March through early November, and MST (UTC-7) otherwise. Today is {{ TODAY }}, so use the correct offset for this time of year.
 
-- **Today** (`{{ DATE }}`): `time_min: "{{ DATE }}T00:00:00-06:00"`, `time_max: "{{ DATE }}T23:59:59-06:00"`
-- **Tomorrow**: increment the date by one day and use `T00:00:00-06:00` – `T23:59:59-06:00`
+- **Today** (`{{ DATE }}`): `time_min: "{{ DATE }}T00:00:00{{ TZ_OFFSET }}"`, `time_max: "{{ DATE }}T23:59:59{{ TZ_OFFSET }}"`
+- **Tomorrow**: increment the date by one day and use `T00:00:00{{ TZ_OFFSET }}` – `T23:59:59{{ TZ_OFFSET }}`
 - **Day after tomorrow**: same pattern
 
 Each event in the results includes a full Mountain Time date (`YYYY-MM-DD HH:MM AM/PM MT`). **Always assign events to the day matching the MT date in the event output**, not the date you queried. Do not group events from different days together — each day must appear under its own clearly labeled heading (e.g., "Tuesday, April 7 — Today").

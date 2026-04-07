@@ -58,10 +58,17 @@ def load_agent_prompt() -> str:
     content = path.read_text()
 
     # Substitute simple template variables
-    today = datetime.now()
+    from zoneinfo import ZoneInfo
+    mountain = ZoneInfo("America/Denver")
+    today = datetime.now(mountain)
+    offset_secs = today.utcoffset().total_seconds()
+    offset_hours = int(offset_secs // 3600)
+    tz_offset = f"{offset_hours:+03d}:00"  # e.g. "-06:00" (MDT) or "-07:00" (MST)
+
     content = content.replace("{{ TODAY }}", today.strftime("%A, %B %-d, %Y"))
     content = content.replace("{{ DATE }}", today.strftime("%Y-%m-%d"))
-    content = content.replace("{{ TIME }}", today.strftime("%I:%M %p %Z"))
+    content = content.replace("{{ TIME }}", today.strftime("%-I:%M %p %Z"))
+    content = content.replace("{{ TZ_OFFSET }}", tz_offset)
 
     # Inject optional env vars
     briefing_email = os.environ.get("BRIEFING_EMAIL", "")
