@@ -420,10 +420,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 sse_transport = SseServerTransport("/message")
 
 
-async def handle_sse(request):
-    async with sse_transport.connect_sse(
-        request.scope, request.receive, request._send
-    ) as streams:
+async def handle_sse(scope, receive, send):
+    # Raw ASGI callable — Starlette 1.0 Route expects a Response return value,
+    # but SSE owns the full HTTP lifecycle itself. Use Mount (not Route) so
+    # Starlette passes (scope, receive, send) directly without wrapping.
+    async with sse_transport.connect_sse(scope, receive, send) as streams:
         await server.run(streams[0], streams[1], server.create_initialization_options())
 
 
@@ -433,7 +434,7 @@ async def handle_health(request):
 
 app = Starlette(
     routes=[
-        Route("/sse", endpoint=handle_sse),
+        Mount("/sse", app=handle_sse),
         Mount("/message", app=sse_transport.handle_post_message),
         Route("/health", endpoint=handle_health),
     ]
