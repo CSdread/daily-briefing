@@ -6,7 +6,7 @@ GMAIL_IMAGE       := $(REGISTRY)/gmail-mcp
 GCAL_IMAGE        := $(REGISTRY)/gcal-mcp
 MAC_BRIDGE_IMAGE  := $(REGISTRY)/mac-bridge
 
-RUNNER_TAG        ?= 3
+RUNNER_TAG        ?= 4
 GMAIL_TAG         ?= 2
 GCAL_TAG          ?= 2
 MAC_BRIDGE_TAG    ?= 1
@@ -90,7 +90,7 @@ update-config:
 		--from-file=AGENT.md=prompts/daily-briefing/AGENT.md \
 		--from-file=mcp.json=k8s/agents/daily-briefing/mcp.json \
 		-n $(NAMESPACE) \
-		--dry-run=client -o yaml | kubectl apply -f -
+		--dry-run -o yaml | kubectl apply -f -
 
 # ─── Manual job trigger ───────────────────────────────────────────────────────
 

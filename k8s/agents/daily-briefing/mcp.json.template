@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "home-assistant": {
-      "url": "<external>"
+      "url": "<external>",
+      "transport": "streamable_http"
     },
     "gmail": {
       "url": "http://gmail-mcp.agents.svc.cluster.local:3000/sse"
