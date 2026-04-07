@@ -19,6 +19,7 @@ secrets.yaml
 *-secret.yaml
 .env
 .env.*
+k8s/agents/daily-briefing/mcp.json
 
 # Docker
 .dockerignore
