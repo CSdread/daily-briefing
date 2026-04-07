@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,10 @@ MCP_CONFIG_PATH = os.environ.get("MCP_CONFIG_PATH", "/config/mcp.json")
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-6")
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "8192"))
 MAX_TURNS = int(os.environ.get("MAX_TURNS", "50"))
+# Seconds to wait between turns — prevents hitting the RPM rate limit
+TURN_DELAY = float(os.environ.get("TURN_DELAY", "15"))
+# Truncate tool results to this many characters to keep input tokens in check
+TOOL_RESULT_MAX_CHARS = int(os.environ.get("TOOL_RESULT_MAX_CHARS", "3000"))
 
 
 def load_agent_prompt() -> str:
@@ -140,11 +145,46 @@ async def call_mcp_tool(tool_name: str, tool_input: dict, server_config: dict) -
     return "\n".join(parts) if parts else "Tool executed successfully with no output"
 
 
+def call_api_with_retry(client: anthropic.Anthropic, **kwargs) -> Any:
+    """Call the Anthropic API, respecting Retry-After headers and backing off on rate limits."""
+    max_retries = 6
+    fallback_delay = 60  # used if no Retry-After header present
+
+    for attempt in range(max_retries):
+        try:
+            return client.messages.create(**kwargs)
+        except anthropic.RateLimitError as exc:
+            if attempt == max_retries - 1:
+                raise
+            # Honour the Retry-After header when present
+            retry_after = None
+            if hasattr(exc, "response") and exc.response is not None:
+                retry_after = exc.response.headers.get("retry-after")
+            wait = int(retry_after) if retry_after else fallback_delay * (2 ** attempt)
+            log.warning("Rate limited (attempt %d/%d) — waiting %ds", attempt + 1, max_retries, wait)
+            time.sleep(wait)
+        except anthropic.APIStatusError as exc:
+            if exc.status_code == 529 and attempt < max_retries - 1:
+                wait = fallback_delay * (2 ** attempt)
+                log.warning("API overloaded (attempt %d/%d) — waiting %ds", attempt + 1, max_retries, wait)
+                time.sleep(wait)
+            else:
+                raise
+
+
+def truncate_tool_result(result: str) -> str:
+    if len(result) <= TOOL_RESULT_MAX_CHARS:
+        return result
+    truncated = result[:TOOL_RESULT_MAX_CHARS]
+    log.warning("Tool result truncated from %d to %d chars", len(result), TOOL_RESULT_MAX_CHARS)
+    return truncated + f"\n... [truncated — {len(result) - TOOL_RESULT_MAX_CHARS} chars omitted]"
+
+
 async def run_agent() -> None:
     prompt = load_agent_prompt()
     mcp_config = load_mcp_config()
 
-    log.info("Starting agent run | model=%s max_turns=%d", MODEL, MAX_TURNS)
+    log.info("Starting agent run | model=%s max_turns=%d turn_delay=%ss", MODEL, MAX_TURNS, TURN_DELAY)
     log.info("Prompt length: %d characters", len(prompt))
 
     tools, tool_server_map = await discover_mcp_tools(mcp_config)
@@ -155,6 +195,10 @@ async def run_agent() -> None:
     for turn in range(1, MAX_TURNS + 1):
         log.info("--- Turn %d/%d ---", turn, MAX_TURNS)
 
+        if turn > 1:
+            log.info("Waiting %ss before next API call", TURN_DELAY)
+            await asyncio.sleep(TURN_DELAY)
+
         kwargs: dict[str, Any] = {
             "model": MODEL,
             "max_tokens": MAX_TOKENS,
@@ -163,7 +207,7 @@ async def run_agent() -> None:
         if tools:
             kwargs["tools"] = tools
 
-        response = client.messages.create(**kwargs)
+        response = call_api_with_retry(client, **kwargs)
         log.info("stop_reason=%s usage=%s", response.stop_reason, response.usage)
 
         # Add assistant response to conversation history
@@ -199,6 +243,7 @@ async def run_agent() -> None:
                     result = f"Error: Tool '{block.name}' not found in any connected MCP server"
                     log.warning(result)
 
+                result = truncate_tool_result(result)
                 log.info("Tool result (%d chars): %s...", len(result), result[:200])
                 tool_results.append(
                     {

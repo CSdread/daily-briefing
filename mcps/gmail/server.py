@@ -39,6 +39,7 @@ import uvicorn
 
 PORT = int(os.environ.get("PORT", "3000"))
 OAUTH_DIR = Path(os.environ.get("OAUTH_DIR", "/oauth"))
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "")
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -166,6 +167,13 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Email body content (plain text or HTML)",
                     },
+                    "from_address": {
+                        "type": "string",
+                        "description": (
+                            "Sender address. Must be a verified 'Send mail as' alias "
+                            "in the Gmail account. Omit to use the account default."
+                        ),
+                    },
                     "html": {
                         "type": "boolean",
                         "description": "True if body is HTML. Default: false",
@@ -254,11 +262,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         subject = arguments["subject"]
         body = arguments["body"]
         is_html = arguments.get("html", False)
+        from_address = arguments.get("from_address") or DEFAULT_FROM_EMAIL or None
 
         mime_type = "html" if is_html else "plain"
         msg = MIMEMultipart()
         msg["to"] = to
         msg["subject"] = subject
+        if from_address:
+            msg["from"] = from_address
         msg.attach(MIMEText(body, mime_type))
 
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
@@ -267,7 +278,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             body={"raw": raw},
         ).execute()
 
-        return [TextContent(type="text", text=f"Email sent successfully to {to}")]
+        sender = from_address or "your Gmail account"
+        return [TextContent(type="text", text=f"Email sent successfully from {sender} to {to}")]
 
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]

@@ -22,12 +22,13 @@ Get events for today and the next two days:
 - Use `gcal_list_events` with `calendar_id: "primary"` for today's full date range
 - Also check the next two days for important upcoming events
 - Note any multi-person meetings, appointments with locations, or events with prep requirements
+- Birthdays are important as well and need to be noted and listed in a seperate section
 
 ### 2. Gmail — Pending Responses
 
 Search for emails requiring Daniel's attention:
 - `is:unread` — unread emails in the last 48 hours
-- `is:starred` — starred/flagged emails  
+- `is:starred` — starred/flagged emails
 - Look specifically for emails where Daniel is the last recipient in a thread (needs to reply)
 - Exclude newsletters, automated notifications, and mailing lists
 - Prioritize: direct messages from people, anything marked urgent

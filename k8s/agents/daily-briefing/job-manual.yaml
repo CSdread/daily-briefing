@@ -1,0 +1,73 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Change the name for each manual run to avoid conflicts
+  name: briefing-manual-1
+  namespace: agents
+  labels:
+    app: daily-briefing
+    type: agent-job-manual
+spec:
+  activeDeadlineSeconds: 1800
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: daily-briefing
+        type: agent-job
+    spec:
+      serviceAccountName: agent-runner
+      restartPolicy: Never
+      containers:
+        - name: agent-runner
+          image: csdread/agent-runner:2
+          imagePullPolicy: Always
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: key
+            - name: BRIEFING_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: briefing-config
+                  key: email
+            - name: AGENT_MD_PATH
+              value: /config/AGENT.md
+            - name: MCP_CONFIG_PATH
+              value: /config/mcp.json
+            - name: CLAUDE_MODEL
+              value: claude-sonnet-4-6
+            - name: MAX_TOKENS
+              value: "8192"
+            - name: MAX_TURNS
+              value: "50"
+            - name: TURN_DELAY
+              value: "15"
+            - name: TOOL_RESULT_MAX_CHARS
+              value: "3000"
+            - name: TZ
+              value: America/Denver
+          volumeMounts:
+            - name: agent-config
+              mountPath: /config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: agent-config
+          configMap:
+            name: daily-briefing-config
