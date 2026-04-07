@@ -6,7 +6,7 @@ GMAIL_IMAGE   := $(REGISTRY)/gmail-mcp
 GCAL_IMAGE    := $(REGISTRY)/gcal-mcp
 
 RUNNER_TAG    ?= 2
-GMAIL_TAG     ?= 1
+GMAIL_TAG     ?= 2
 GCAL_TAG      ?= 1
 
 # ─── Build ───────────────────────────────────────────────────────────────────

@@ -52,7 +52,7 @@ The agents platform runs autonomous Claude agents as Kubernetes CronJobs. Each a
     ┌───────────────────┐  ┌─────────────────┐  ┌──────────────────────┐
     │   Anthropic API   │  │   Google APIs   │  │     Mac mini         │
     │ api.anthropic.com │  │  Gmail/Calendar │  │  192.168.1.200:4000  │
-    │  claude-opus-4-6  │  │  OAuth2 tokens  │  │  - iMessage bridge   │
+    │ claude-sonnet-4-6 │  │  OAuth2 tokens  │  │  - iMessage bridge   │
     └───────────────────┘  └─────────────────┘  │  - Reminders bridge  │
                                                  └──────────────────────┘
                                                           │
@@ -118,9 +118,9 @@ The `agent-runner` ServiceAccount has minimal, read-only permissions:
 
 | Resource | Verbs | Scope |
 |----------|-------|-------|
-| configmaps | get, list | agents namespace |
-| secrets | get, list | agents namespace |
+| configmaps | get, list, watch | agents namespace |
 | pods | get, list, watch | agents namespace |
+| jobs | get, list, watch | agents namespace |
 
 No write access to any Kubernetes resources. MCP tools are the only way the agent interacts with external systems.
 
