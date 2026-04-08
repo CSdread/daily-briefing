@@ -53,6 +53,8 @@ spec:
             - name: agent-config
               mountPath: /config
               readOnly: true
+            - name: agent-memory
+              mountPath: /memory
           resources:
             requests:
               cpu: 100m
@@ -71,3 +73,6 @@ spec:
         - name: agent-config
           configMap:
             name: daily-briefing-config
+        - name: agent-memory
+          persistentVolumeClaim:
+            claimName: agent-daily-briefing-1

@@ -14,11 +14,100 @@ Be efficient with tool calls. Prefer searches that return multiple items at once
 
 ---
 
+## Memory
+
+Persistent memory is available at `/memory` when the volume is mounted. Begin each run by attempting to read `/memory/index.md`. If that read fails, memory is unavailable — continue without it and never block or retry.
+
+### Structure
+
+```
+/memory/
+  index.md                        # presence marker; read this to confirm memory is live
+  people/{slug}.json              # one file per known person
+  email_threads/{thread_id}.json  # one file per Gmail thread
+  calendar_events/{event_id}.json # event IDs and the dates they were shown
+  escalations.json                # unresolved flagged items across runs
+```
+
+### Two-pass pattern
+
+**Pass 1 — Read before processing each source.** Load relevant memory files to skip redundant work and enrich output with known context (e.g., resolve "Jenn" → "Jenn (wife)").
+
+**Pass 2 — Write after the email is sent.** Never write memory before the email is sent. Batch your writes at the end.
+
+### Rules
+
+- **People:** Only commit a relationship (e.g., `"relationship": "wife"`) when you have seen it confirmed by 2+ independent signals — shared calendar events, email patterns, how Daniel refers to them. Use `"confidence": "low"` for tentative inferences.
+- **Email threads:** Only assess importance after reading the thread — never from subject line alone.
+- **Pruning:** When updating an email thread file, if `last_message_at` is older than 30 days and `pending_action` is false, delete the file instead of updating it.
+- **Errors:** If a memory read or write fails, note it briefly and continue. Never retry or block.
+
+### Schemas
+
+**`people/{slug}.json`**
+```json
+{
+  "slug": "jenn",
+  "name": "Jenn",
+  "aliases": ["Jenn", "Jennifer", "Mom"],
+  "email_addresses": ["jenn@example.com"],
+  "relationship": "wife",
+  "confidence": "high",
+  "notes": ["coordinates school pickups"],
+  "first_seen": "2026-04-08",
+  "last_updated": "2026-04-08"
+}
+```
+
+**`email_threads/{thread_id}.json`**
+```json
+{
+  "thread_id": "abc123",
+  "subject": "Re: Contractor invoice",
+  "participants": ["contractor@example.com"],
+  "summary": "Invoice #204 for $1,400 — Daniel has not responded",
+  "importance": "high",
+  "importance_reason": "direct ask, money involved",
+  "pending_action": true,
+  "first_seen": "2026-04-03",
+  "last_message_at": "2026-04-07T14:30:00-06:00",
+  "times_shown": 4,
+  "last_shown": "2026-04-08"
+}
+```
+
+**`calendar_events/{event_id}.json`**
+```json
+{
+  "event_id": "xyz789",
+  "title": "Piano Lesson",
+  "shown_on": ["2026-04-06", "2026-04-07", "2026-04-08"]
+}
+```
+
+**`escalations.json`**
+```json
+[
+  {
+    "id": "email:abc123",
+    "description": "Contractor invoice #204 — no reply",
+    "first_flagged": "2026-04-03",
+    "last_flagged": "2026-04-08",
+    "times_flagged": 4,
+    "resolved": false
+  }
+]
+```
+
+---
+
 ## Sources to Gather
+
+Never make up data, all things listed should be backed by an item in one of the sources.
 
 ### 1. Google Calendar
 
-Get events for today and the next two days using **three separate `gcal_list_events` calls**, one per day. Mountain Time uses MDT (UTC-6) from mid-March through early November, and MST (UTC-7) otherwise. Today is {{ TODAY }}, so use the correct offset for this time of year.
+Get events for today and the next two days using **three separate `gcal_list_events` calls**, one per day. Mountain Time uses MDT (UTC-6) from mid-March through early November, and MST (UTC-7) otherwise. Today is {{ TODAY }}, so use the correct offset for this time of year. The MCP may have access to more than one calendar attached to the account. These can be other peoples calendars shared with the owner of the account, they can also be calendars that are shared such as US Holidays. Focus on the users main calendar and work calendar if it exists. Try to map the other calendars to people in the persons life and if something needs escalation to the primary user bring it up in a seperate section of the calendar items.
 
 - **Today** (`{{ DATE }}`): `time_min: "{{ DATE }}T00:00:00{{ TZ_OFFSET }}"`, `time_max: "{{ DATE }}T23:59:59{{ TZ_OFFSET }}"`
 - **Tomorrow**: increment the date by one day and use `T00:00:00{{ TZ_OFFSET }}` – `T23:59:59{{ TZ_OFFSET }}`
@@ -27,25 +116,38 @@ Get events for today and the next two days using **three separate `gcal_list_eve
 Each event in the results includes a full Mountain Time date (`YYYY-MM-DD HH:MM AM/PM MT`). **Always assign events to the day matching the MT date in the event output**, not the date you queried. Do not group events from different days together — each day must appear under its own clearly labeled heading (e.g., "Tuesday, April 7 — Today").
 
 - Note any multi-person meetings, appointments with locations, or events with prep requirements
-- Birthdays are important as well and need to be noted and listed in a separate section
+- Birthdays are important as well and need to be noted and listed in a separate section. Birthdays should be listed for the week being generated looking forward two weeks.
 
-Look at all the calendars, there can be many. Important to note if a calendar is the owner of the connection or if its a partner or spouses calendar. My calendar is of the most important, birthdays and holidays as well.
+If memory is available:
+- Before processing: for each event returned, read `/memory/calendar_events/{event_id}.json`. If the event has already been shown, the stored title and time are authoritative — use them as-is for consistency across days.
+- After sending: write/update each event file, appending today's date to `shown_on`.
 
 ### 2. Gmail — Pending Responses
 
-Search for emails requiring Daniel's attention:
+Search for emails requiring the users attention:
 - `is:unread` — unread emails in the last 48 hours
 - `is:starred` — starred/flagged emails
+- Emails that are read that have questions unanswered questions
 - Look specifically for emails where Daniel is the last recipient in a thread (needs to reply)
 - Exclude newsletters, automated notifications, and mailing lists
 - Prioritize: direct messages from people, anything marked urgent
+- each email should have a title and a summary of what is being asked or what needs attention
+
+If memory is available:
+- Before processing each thread: read `/memory/email_threads/{thread_id}.json`. If it exists and `last_message_at` matches the thread's current last message timestamp, use the stored `summary` and `importance` directly — do not re-read the thread.
+- If `importance` is `"low"` and there is no new activity (`last_message_at` unchanged), skip this thread entirely — do not include it in the email.
+- If the thread is new or has new activity, read it, assess importance, and write an updated memory file after sending.
+- Threads marked `pending_action: true` must appear in every email until resolved, using the stored summary.
 
 ### 3. iMessages (via mac-bridge)
 
 - Use `messages_get_unread` to find unread messages
-- Note any conversations with pending questions or requests needing a reply
+- Note any conversations with pending questions or requests needing a reply, unread or read
 - Skip group chats that are informational only
 - Even if a message is already read, it does not mean it was handled. Any messages in the last week where somebody is waiting on my response should be flagged and reported in the email.
+
+If memory is available:
+- When you encounter a sender name or number, check `/memory/people/` for a match by alias. If found, use their relationship for context (e.g., "Jenn (wife)"). If not found and you have enough signal from this and other sources, create a stub with `confidence: "low"`.
 
 ### 4. Reminders (via mac-bridge)
 
@@ -206,7 +308,15 @@ Populate each section with the actual data gathered. Remove any section block (i
 
 ## When You're Done
 
-After sending the email, confirm with a brief message like:
+After sending the email, if memory is available, perform these writes in order:
+
+1. **Calendar events:** for each event shown, read its memory file (or create if missing) and append today's date to `shown_on`.
+2. **Email threads:** for each thread processed, write or update its memory file. Delete files for threads older than 30 days with `pending_action: false`.
+3. **People:** for any new person encountered with 2+ independent signals (calendar + email, repeated first-name usage, etc.), create or update their people file. Update `last_updated` on existing entries when new notes are learned.
+4. **Escalations:** read `/memory/escalations.json` (create if missing as `[]`). For each unresolved item shown in today's email, increment `times_flagged` and update `last_flagged`. Add any newly flagged items. Mark `resolved: true` for any item where the underlying thread is no longer active.
+5. **Index:** if `/memory/index.md` does not exist, write it with content: `# Daily Briefing Memory\nInitialized: {{ TODAY }}\n`.
+
+Then confirm with a brief message like:
 "Daily briefing sent to [email]. Covered: calendar (N events), N pending responses, N reminders, home status."
 
-Then stop — do not continue gathering data or making tool calls after the email is sent.
+Then stop — do not continue gathering data or making tool calls after memory writes are complete.
