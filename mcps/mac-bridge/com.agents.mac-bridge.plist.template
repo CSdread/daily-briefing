@@ -24,8 +24,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <!-- Update path if Python is installed elsewhere -->
-        <string>/opt/homebrew/bin/python3</string>
+        <!-- Uses the venv created by: python3 -m venv ~/agents-bridge/venv -->
+        <string>/Users/USERNAME/agents-bridge/venv/bin/python3</string>
         <string>/Users/USERNAME/agents-bridge/server.py</string>
     </array>
 

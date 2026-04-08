@@ -6,7 +6,7 @@ metadata:
 subsets:
   - addresses:
       # Update to the IP of the machine running mac-bridge natively
-      - ip: 10.0.1.113
+      - ip:
     ports:
       - port: 4000
         name: sse

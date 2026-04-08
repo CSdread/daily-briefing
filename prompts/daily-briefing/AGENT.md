@@ -29,6 +29,8 @@ Each event in the results includes a full Mountain Time date (`YYYY-MM-DD HH:MM 
 - Note any multi-person meetings, appointments with locations, or events with prep requirements
 - Birthdays are important as well and need to be noted and listed in a separate section
 
+Look at all the calendars, there can be many. Important to note if a calendar is the owner of the connection or if its a partner or spouses calendar. My calendar is of the most important, birthdays and holidays as well.
+
 ### 2. Gmail — Pending Responses
 
 Search for emails requiring Daniel's attention:
@@ -43,12 +45,14 @@ Search for emails requiring Daniel's attention:
 - Use `messages_get_unread` to find unread messages
 - Note any conversations with pending questions or requests needing a reply
 - Skip group chats that are informational only
+- Even if a message is already read, it does not mean it was handled. Any messages in the last week where somebody is waiting on my response should be flagged and reported in the email.
 
 ### 4. Reminders (via mac-bridge)
 
 - Use `reminders_get_due_today` for items due today or overdue
 - Use `reminders_get_incomplete` to surface any important undated reminders
 - Group by Reminders list if helpful
+- Are any reminders getting old, if so they should be flagged and listed in the email
 
 ### 5. Home Assistant — Home Status
 
