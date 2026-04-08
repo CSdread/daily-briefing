@@ -46,10 +46,11 @@ Begin each run by calling `memory_read` with path `index.md`. If it returns an e
 
 ### Rules
 
-- **People:** Only commit a relationship (e.g., `"relationship": "wife"`) when you have seen it confirmed by 2+ independent signals — shared calendar events, email patterns, how Daniel refers to them. Use `"confidence": "low"` for tentative inferences.
+- **People:** Only commit a relationship (e.g., `"relationship": "wife"`) when you have seen it confirmed by 2+ independent signals — shared calendar events, email patterns, how Daniel refers to them. Use `"confidence": "low"` for tentative inferences. Notes must contain only **stable biographical facts** (relationship, contact preferences, recurring patterns like maintenance rotations). Never store calendar events, appointment types, or anything time-sensitive in people notes — that data is dynamic and must always come from the live source.
 - **Email threads:** Only assess importance after reading the thread — never from subject line alone.
 - **Pruning:** When updating an email thread file, if `last_message_at` is older than 30 days and `pending_action` is false, delete the file instead of updating it.
 - **Errors:** If a memory read or write fails, note it briefly and continue. Never retry or block.
+- **Memory never overrides live data:** Memory is supplementary context. Calendar events, email content, and home sensor values must always come from their live sources. If memory and a live source conflict, trust the live source and update memory to match.
 
 ### Schemas
 
@@ -128,8 +129,9 @@ Each event in the results includes a full Mountain Time date (`YYYY-MM-DD HH:MM 
 - Birthdays are important as well and need to be noted and listed in a separate section. Birthdays should be listed for the week being generated looking forward two weeks.
 
 If memory is available:
-- Before processing: for each event returned, call `memory_read` with path `calendar_events/{event_id}.json`. If the event has already been shown, the stored title and time are authoritative — use them as-is for consistency across days.
-- After sending: call `memory_write` to update each event file, appending today's date to `shown_on`.
+- After sending: for each event shown, call `memory_write` to update `calendar_events/{event_id}.json`, appending today's date to `shown_on`. This is metadata only — always use live calendar data for event details.
+
+**Important:** never use memory to substitute calendar event details (title, time, location). The calendar API is always the source of truth. Memory only records which dates an event has appeared in the briefing.
 
 ### 2. Gmail — Pending Responses
 
@@ -319,7 +321,7 @@ Populate each section with the actual data gathered. Remove any section block (i
 
 After sending the email, if memory is available, perform these writes in order:
 
-1. **Calendar events:** for each event shown, call `memory_read` on `calendar_events/{event_id}.json` (create if missing) and call `memory_write` with the updated `shown_on` array.
+1. **Calendar events:** for each event shown, call `memory_read` on `calendar_events/{event_id}.json` to get the existing `shown_on` array (or start with `[]` if not found), append today's date, and call `memory_write` with the updated file. Store only `event_id`, `title` (for reference), and `shown_on` — never use this to substitute live calendar data.
 2. **Email threads:** for each thread processed, call `memory_write` to create or update its file. Call `memory_delete` for thread files where `last_message_at` is older than 30 days and `pending_action` is false.
 3. **People:** for any new person encountered with 2+ independent signals (calendar + email, repeated first-name usage, etc.), call `memory_write` to create or update their file. Update `last_updated` on existing entries when new notes are learned.
 4. **Escalations:** call `memory_read` on `escalations.json` (create as `[]` if missing). For each unresolved item shown in today's email, increment `times_flagged` and update `last_flagged`. Add newly flagged items. Mark `resolved: true` for items where the underlying thread is no longer active. Call `memory_write` to save.
