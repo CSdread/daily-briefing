@@ -1,6 +1,6 @@
 # Plan: Generic Agent Harness
 
-## Status: Awaiting confirmation
+## Status: Implemented on branch `generic-agent-harness`
 
 ## Goal
 

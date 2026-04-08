@@ -65,8 +65,13 @@ def load_agent_prompt() -> str:
 
     # Substitute simple template variables
     from zoneinfo import ZoneInfo
-    mountain = ZoneInfo("America/Denver")
-    today = datetime.now(mountain)
+    tz_name = os.environ.get("TZ", "UTC")
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        log.warning("Unknown TZ value %r — falling back to UTC", tz_name)
+        tz = ZoneInfo("UTC")
+    today = datetime.now(tz)
     offset_secs = today.utcoffset().total_seconds()
     offset_hours = int(offset_secs // 3600)
     tz_offset = f"{offset_hours:+03d}:00"  # e.g. "-06:00" (MDT) or "-07:00" (MST)
