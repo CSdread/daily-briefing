@@ -244,8 +244,15 @@ async def run_agent() -> None:
 
     tools, tool_server_map = await discover_mcp_tools(mcp_config)
 
+    # Mark the last tool for prompt caching — Anthropic caches everything up to
+    # this point across turns, so tool definitions don't burn TPM on every call.
+    if tools:
+        tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+
     client = anthropic.Anthropic()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    # System prompt is static across all turns — ideal for caching.
+    system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Begin."}]
 
     for turn in range(1, MAX_TURNS + 1):
         log.info("--- Turn %d/%d ---", turn, MAX_TURNS)
@@ -258,6 +265,7 @@ async def run_agent() -> None:
         kwargs: dict[str, Any] = {
             "model": MODEL,
             "max_tokens": MAX_TOKENS,
+            "system": system,
             "messages": messages,
         }
         if tools:
