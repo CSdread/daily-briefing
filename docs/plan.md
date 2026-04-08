@@ -425,11 +425,74 @@ Tune resource requests/limits based on observed usage:
 
 ---
 
+## Phase 8: Agent Memory
+
+**Goal:** Add persistent cross-run memory so the agent accumulates context over time, avoids redundant summarization, and escalates unresolved items.
+
+### Motivation
+
+Without memory, each run re-reads and re-summarizes every email thread and re-infers every relationship. This wastes tokens, inflates context size, and loses continuity. With memory, the agent:
+- Skips re-reading unchanged email threads (uses stored summary + importance)
+- Keeps calendar event display consistent across the 3-day window
+- Builds a people graph (names → relationships) from observed signals
+- Tracks unresolved flagged items across days and escalates them
+
+### Approach
+
+Filesystem-based memory on an NFS PersistentVolume — no additional services required. The agent uses its built-in file tools to read/write JSON files under `/memory/`.
+
+Vector/semantic memory (e.g., mem0, OpenMemory) was considered but rejected: all use cases are keyed lookups (by thread ID, event ID, person slug), not semantic search. The filesystem approach is simpler, transparent, and debuggable.
+
+### Storage
+
+```bash
+# On soma.bhavana.local NFS server:
+mkdir /kube-volumes/agent-daily-briefing-1
+
+# Apply k8s resources:
+kubectl apply -f k8s/agents/daily-briefing/storage.yaml
+# (or: make deploy-storage)
+```
+
+PV/PVC: `agent-daily-briefing-1`, 500Mi, ReadWriteMany, NFS at `soma.bhavana.local`.
+
+### Memory Structure
+
+```
+/memory/
+  index.md                        # presence marker; written on first run
+  people/{slug}.json              # known people with relationships + aliases
+  email_threads/{thread_id}.json  # summaries, importance, action status
+  calendar_events/{event_id}.json # event IDs and dates shown
+  escalations.json                # unresolved flagged items with counters
+```
+
+See `prompts/daily-briefing/AGENT.md` for full schemas and per-source instructions.
+
+### Two-Pass Pattern
+
+1. **Pass 1 (before fetching):** read memory to skip redundant API calls and enrich names.
+2. **Pass 2 (after sending):** batch write all updates — never write before email is sent.
+
+Memory is optional. If the volume is not mounted, the agent runs without it.
+
+---
+
+## Resolved Questions
+
+| Question | Resolution |
+|----------|-----------|
+| Mac mini static IP | `192.168.1.200` (alethiometer.local) |
+| Registry | `csdread/` Docker Hub confirmed working |
+| Google OAuth scopes | Gmail read + send; Calendar read-only |
+| Email destination | `BRIEFING_EMAIL` secret in `briefing-config` |
+| HA entity names | Confirmed via HA MCP at runtime |
+| Token refresh | Re-run `authorize.py` and update secret; see `docs/secrets.md` |
+
+---
+
 ## Open Questions
 
-- **Mac mini static IP:** Confirm IP address before deploying the ExternalName service
-- **Registry:** Confirm `csdread/` Docker Hub registry is accessible from the cluster (or switch to `ghcr.io`)
-- **Google OAuth scopes:** Decide if the agent should only read Gmail or also send (for the briefing itself)
-- **Email destination:** Configure `BRIEFING_EMAIL` env var in CronJob
-- **HA entity names:** Confirm exact entity IDs for vacuum, hot tub, and maintenance sensors in Home Assistant
-- **Token refresh:** Google OAuth refresh tokens can expire if unused for 6 months — plan for periodic re-auth
+- **Token refresh automation:** Google OAuth tokens can expire after 6 months of inactivity — consider a reminder or automated re-auth flow
+- **Memory pruning cadence:** Email thread files older than 30 days with no pending action are pruned each run; calendar event files are not yet pruned (low priority given 500Mi volume)
+- **People graph confidence:** Relationship inference currently requires 2+ signals; tuning may be needed after observing a few weeks of output

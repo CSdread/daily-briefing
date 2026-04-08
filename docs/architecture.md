@@ -23,6 +23,7 @@ The agents platform runs autonomous Claude agents as Kubernetes CronJobs. Each a
 │  │  │  │                                                        │  │   │ │
 │  │  │  │   /config/AGENT.md ──► Claude Agentic Loop            │  │   │ │
 │  │  │  │   /config/mcp.json       │                            │  │   │ │
+│  │  │  │   /memory/ ◄────────────►│ (read before, write after) │  │   │ │
 │  │  │  │                          ▼                            │  │   │ │
 │  │  │  │              Anthropic API (api.anthropic.com)        │  │   │ │
 │  │  │  │                          │                            │  │   │ │
@@ -38,6 +39,11 @@ The agents platform runs autonomous Claude agents as Kubernetes CronJobs. Each a
 │  │    │  :3000/sse   │ │ :3001/sse│ │ExternalName│ │  → Mac mini     │ │ │
 │  │    │  ClusterIP   │ │ ClusterIP│ │:4000/sse │ │  192.168.1.200  │ │ │
 │  │    └──────────────┘ └──────────┘ └──────────┘ └─────────────────┘ │ │
+│  │                                                                       │ │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │ │
+│  │  │  PVC: agent-daily-briefing-1  →  NFS: soma.bhavana.local     │   │ │
+│  │  │  /kube-volumes/agent-daily-briefing-1  (mounted at /memory)  │   │ │
+│  │  └──────────────────────────────────────────────────────────────┘   │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 │                                                                           │
 │  ┌─────────────────── mcp namespace ──────────────────────────────────┐ │
@@ -79,7 +85,11 @@ agent-runner starts
      │
      ├─ Mount: /config/AGENT.md (from ConfigMap)
      ├─ Mount: /config/mcp.json (from ConfigMap)
+     ├─ Mount: /memory (from NFS PVC — agent memory)
      └─ Env: ANTHROPIC_API_KEY (from Secret)
+     │
+     ▼
+Read /memory/index.md → confirm memory is available
      │
      ▼
 Connect to MCP servers
@@ -91,24 +101,59 @@ Connect to MCP servers
      ▼
 Submit AGENT.md prompt to Claude API
      │
-     ▼ (agentic loop)
-Claude calls tools as needed:
-     ├─ gcal_list_events → today + tomorrow's calendar
+     ▼ (agentic loop — Pass 1: read memory, then fetch)
+     ├─ Read /memory/calendar_events/* → reuse stored event data if unchanged
+     ├─ gcal_list_events → today + 2 days of calendar events
+     ├─ Read /memory/email_threads/* → skip unchanged low-importance threads
      ├─ gmail_search → unread emails, pending responses
+     ├─ Read /memory/people/* → enrich names with known relationships
      ├─ messages_list_unread → unread iMessages
      ├─ reminders_list → overdue + due today
      ├─ ha_get_states → vacuum, hot tub, sensors
      └─ ... (more tool calls as needed)
      │
      ▼
-Claude composes briefing email text
+Claude composes briefing email (HTML)
      │
      ▼
 gmail_send → sends email to BRIEFING_EMAIL
      │
+     ▼ (Pass 2: write memory updates)
+     ├─ Write /memory/calendar_events/* (append shown_on dates)
+     ├─ Write /memory/email_threads/* (summaries, importance, prune old)
+     ├─ Write /memory/people/* (new/updated relationship inferences)
+     └─ Write /memory/escalations.json (increment counters, mark resolved)
+     │
      ▼
 Agent returns end_turn → Pod exits 0
 ```
+
+---
+
+## Agent Memory
+
+The daily briefing agent uses a persistent filesystem-based memory store to reduce redundant work and accumulate context across runs.
+
+### Storage
+
+Memory is backed by an NFS PersistentVolume on `soma.bhavana.local` at `/kube-volumes/agent-daily-briefing-1`, mounted read-write at `/memory` inside the agent container. The root container filesystem remains read-only — `/memory` is the only writable mount.
+
+### Memory Areas
+
+| Path | Content | Purpose |
+|------|---------|---------|
+| `/memory/index.md` | Presence marker | Agent reads this to confirm memory is live; created on first run |
+| `/memory/people/{slug}.json` | Name, aliases, email, relationship, notes | Enrich output with known relationships; avoid re-inferring each run |
+| `/memory/email_threads/{thread_id}.json` | Summary, importance, timestamps, shown count | Skip re-reading unchanged threads; surface persistent action items |
+| `/memory/calendar_events/{event_id}.json` | Event ID, dates shown | Keep event display consistent across the 3-day window |
+| `/memory/escalations.json` | Unresolved flagged items with counters | Track items not actioned across multiple days |
+
+### Two-Pass Pattern
+
+1. **Before fetching:** read relevant memory files to skip redundant API calls and enrich names with known relationships.
+2. **After sending:** batch all writes — never write before the email is sent.
+
+Memory is optional. If `/memory/index.md` is unreadable (volume not mounted), the agent runs without it.
 
 ---
 
