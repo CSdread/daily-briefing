@@ -16,7 +16,16 @@ Be efficient with tool calls. Prefer searches that return multiple items at once
 
 ## Memory
 
-Persistent memory is available at `/memory` when the volume is mounted. Begin each run by attempting to read `/memory/index.md`. If that read fails, memory is unavailable — continue without it and never block or retry.
+Persistent memory is available at `/memory` when the volume is mounted. Four built-in tools give you access:
+
+| Tool | Purpose |
+|------|---------|
+| `memory_read` | Read a file (path relative to `/memory`) |
+| `memory_write` | Write or overwrite a file (creates parent dirs) |
+| `memory_list` | List contents of a directory (use `""` for root) |
+| `memory_delete` | Delete a file |
+
+Begin each run by calling `memory_read` with path `index.md`. If it returns an error, memory is unavailable — continue without it and never block or retry.
 
 ### Structure
 
@@ -31,9 +40,9 @@ Persistent memory is available at `/memory` when the volume is mounted. Begin ea
 
 ### Two-pass pattern
 
-**Pass 1 — Read before processing each source.** Load relevant memory files to skip redundant work and enrich output with known context (e.g., resolve "Jenn" → "Jenn (wife)").
+**Pass 1 — Read before processing each source.** Use `memory_read` to load relevant files, skip redundant work, and enrich output with known context (e.g., resolve "Jenn" → "Jenn (wife)").
 
-**Pass 2 — Write after the email is sent.** Never write memory before the email is sent. Batch your writes at the end.
+**Pass 2 — Write after the email is sent.** Use `memory_write` and `memory_delete` to update state. Never write before the email is sent. Batch your writes at the end.
 
 ### Rules
 
@@ -119,8 +128,8 @@ Each event in the results includes a full Mountain Time date (`YYYY-MM-DD HH:MM 
 - Birthdays are important as well and need to be noted and listed in a separate section. Birthdays should be listed for the week being generated looking forward two weeks.
 
 If memory is available:
-- Before processing: for each event returned, read `/memory/calendar_events/{event_id}.json`. If the event has already been shown, the stored title and time are authoritative — use them as-is for consistency across days.
-- After sending: write/update each event file, appending today's date to `shown_on`.
+- Before processing: for each event returned, call `memory_read` with path `calendar_events/{event_id}.json`. If the event has already been shown, the stored title and time are authoritative — use them as-is for consistency across days.
+- After sending: call `memory_write` to update each event file, appending today's date to `shown_on`.
 
 ### 2. Gmail — Pending Responses
 
@@ -134,9 +143,9 @@ Search for emails requiring the users attention:
 - each email should have a title and a summary of what is being asked or what needs attention
 
 If memory is available:
-- Before processing each thread: read `/memory/email_threads/{thread_id}.json`. If it exists and `last_message_at` matches the thread's current last message timestamp, use the stored `summary` and `importance` directly — do not re-read the thread.
+- Before processing each thread: call `memory_read` with path `email_threads/{thread_id}.json`. If it exists and `last_message_at` matches the thread's current last message timestamp, use the stored `summary` and `importance` directly — do not re-read the thread.
 - If `importance` is `"low"` and there is no new activity (`last_message_at` unchanged), skip this thread entirely — do not include it in the email.
-- If the thread is new or has new activity, read it, assess importance, and write an updated memory file after sending.
+- If the thread is new or has new activity, read it, assess importance, and call `memory_write` to update the file after sending.
 - Threads marked `pending_action: true` must appear in every email until resolved, using the stored summary.
 
 ### 3. iMessages (via mac-bridge)
@@ -147,7 +156,7 @@ If memory is available:
 - Even if a message is already read, it does not mean it was handled. Any messages in the last week where somebody is waiting on my response should be flagged and reported in the email.
 
 If memory is available:
-- When you encounter a sender name or number, check `/memory/people/` for a match by alias. If found, use their relationship for context (e.g., "Jenn (wife)"). If not found and you have enough signal from this and other sources, create a stub with `confidence: "low"`.
+- When you encounter a sender name or number, call `memory_list` with path `people` then `memory_read` for any likely match by alias. If found, use their relationship for context (e.g., "Jenn (wife)"). If not found and you have enough signal from this and other sources, call `memory_write` to create a stub with `confidence: "low"`.
 
 ### 4. Reminders (via mac-bridge)
 
@@ -310,11 +319,11 @@ Populate each section with the actual data gathered. Remove any section block (i
 
 After sending the email, if memory is available, perform these writes in order:
 
-1. **Calendar events:** for each event shown, read its memory file (or create if missing) and append today's date to `shown_on`.
-2. **Email threads:** for each thread processed, write or update its memory file. Delete files for threads older than 30 days with `pending_action: false`.
-3. **People:** for any new person encountered with 2+ independent signals (calendar + email, repeated first-name usage, etc.), create or update their people file. Update `last_updated` on existing entries when new notes are learned.
-4. **Escalations:** read `/memory/escalations.json` (create if missing as `[]`). For each unresolved item shown in today's email, increment `times_flagged` and update `last_flagged`. Add any newly flagged items. Mark `resolved: true` for any item where the underlying thread is no longer active.
-5. **Index:** if `/memory/index.md` does not exist, write it with content: `# Daily Briefing Memory\nInitialized: {{ TODAY }}\n`.
+1. **Calendar events:** for each event shown, call `memory_read` on `calendar_events/{event_id}.json` (create if missing) and call `memory_write` with the updated `shown_on` array.
+2. **Email threads:** for each thread processed, call `memory_write` to create or update its file. Call `memory_delete` for thread files where `last_message_at` is older than 30 days and `pending_action` is false.
+3. **People:** for any new person encountered with 2+ independent signals (calendar + email, repeated first-name usage, etc.), call `memory_write` to create or update their file. Update `last_updated` on existing entries when new notes are learned.
+4. **Escalations:** call `memory_read` on `escalations.json` (create as `[]` if missing). For each unresolved item shown in today's email, increment `times_flagged` and update `last_flagged`. Add newly flagged items. Mark `resolved: true` for items where the underlying thread is no longer active. Call `memory_write` to save.
+5. **Index:** call `memory_read` on `index.md` — if it errored earlier (memory was unavailable), skip remaining writes. Otherwise if the file does not yet exist, call `memory_write` with path `index.md` and content `# Daily Briefing Memory\nInitialized: {{ TODAY }}\n`.
 
 Then confirm with a brief message like:
 "Daily briefing sent to [email]. Covered: calendar (N events), N pending responses, N reminders, home status."

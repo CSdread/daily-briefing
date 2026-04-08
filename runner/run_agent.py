@@ -7,13 +7,19 @@ Claude in an agentic loop with MCP tool access. MCP servers are configured
 via /config/mcp.json. The runner acts as an MCP client, calling each server
 in-cluster over HTTP/SSE.
 
+Built-in memory tools (memory_read, memory_write, memory_list, memory_delete)
+are also registered and handled in-process for reading/writing /memory.
+
 Environment variables:
   ANTHROPIC_API_KEY   Required. Anthropic API key.
   AGENT_MD_PATH       Path to AGENT.md. Default: /config/AGENT.md
   MCP_CONFIG_PATH     Path to mcp.json. Default: /config/mcp.json
+  MEMORY_PATH         Path to memory volume. Default: /memory
   CLAUDE_MODEL        Claude model ID. Default: claude-opus-4-6
   MAX_TOKENS          Max tokens per response. Default: 8192
   MAX_TURNS           Max agentic loop turns before giving up. Default: 50
+  TURN_DELAY          Seconds between turns (rate limit buffer). Default: 15
+  TOOL_RESULT_MAX_CHARS  Truncate tool results to this length. Default: 3000
   BRIEFING_EMAIL      Passed as context to the agent prompt (optional).
 """
 
@@ -29,12 +35,9 @@ from pathlib import Path
 from typing import Any
 
 import anthropic
-from contextlib import asynccontextmanager
 
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.types import Tool
+from mcp_client import discover_mcp_tools, call_mcp_tool
+from memory import BUILTIN_TOOLS, BUILTIN_TOOL_NAMES, call_builtin_tool
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,7 +76,6 @@ def load_agent_prompt() -> str:
     content = content.replace("{{ TIME }}", today.strftime("%-I:%M %p %Z"))
     content = content.replace("{{ TZ_OFFSET }}", tz_offset)
 
-    # Inject optional env vars
     briefing_email = os.environ.get("BRIEFING_EMAIL", "")
     if briefing_email:
         content = content.replace("{{ BRIEFING_EMAIL }}", briefing_email)
@@ -97,81 +99,10 @@ def load_mcp_config() -> dict:
     return json.loads(raw)
 
 
-@asynccontextmanager
-async def mcp_client(server_config: dict):
-    """Open an MCP client session using the transport specified in server_config."""
-    url = server_config["url"]
-    headers = server_config.get("headers", {})
-    transport = server_config.get("transport", "sse")
-    if transport == "streamable_http":
-        async with streamablehttp_client(url, headers=headers) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
-    else:
-        async with sse_client(url, headers=headers) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
-
-
-def mcp_tool_to_anthropic(tool: Tool) -> dict:
-    """Convert MCP Tool definition to Anthropic tool input format."""
-    return {
-        "name": tool.name,
-        "description": tool.description or "",
-        "input_schema": tool.inputSchema or {"type": "object", "properties": {}},
-    }
-
-
-async def discover_mcp_tools(mcp_config: dict) -> tuple[list[dict], dict[str, dict]]:
-    """Connect to each MCP server, collect tool definitions, and build routing table."""
-    all_tools: list[dict] = []
-    tool_server_map: dict[str, dict] = {}  # tool_name -> server_config
-
-    for server_name, server_config in mcp_config.get("mcpServers", {}).items():
-        log.info("Connecting to MCP server: %s at %s", server_name, server_config["url"])
-        whitelist = set(server_config["tools"]) if "tools" in server_config else None
-        try:
-            async with mcp_client(server_config) as session:
-                response = await session.list_tools()
-                for tool in response.tools:
-                    if whitelist and tool.name not in whitelist:
-                        continue
-                    anthropic_tool = mcp_tool_to_anthropic(tool)
-                    all_tools.append(anthropic_tool)
-                    tool_server_map[tool.name] = server_config
-                    log.info("  Registered tool: %s", tool.name)
-        except Exception as exc:
-            log.error("Failed to connect to MCP server %s: %s", server_name, exc)
-
-    log.info("Total tools available: %d", len(all_tools))
-    return all_tools, tool_server_map
-
-
-async def call_mcp_tool(tool_name: str, tool_input: dict, server_config: dict) -> str:
-    """Invoke a tool on its MCP server and return the result as a string."""
-    async with mcp_client(server_config) as session:
-        result = await session.call_tool(tool_name, tool_input)
-
-    if result.isError:
-        parts = []
-        for content in result.content:
-            if hasattr(content, "text"):
-                parts.append(content.text)
-        return f"Tool error: {' '.join(parts)}"
-
-    parts = []
-    for content in result.content:
-        if hasattr(content, "text"):
-            parts.append(content.text)
-    return "\n".join(parts) if parts else "Tool executed successfully with no output"
-
-
 def call_api_with_retry(client: anthropic.Anthropic, **kwargs) -> Any:
     """Call the Anthropic API, respecting Retry-After headers and backing off on rate limits."""
     max_retries = 6
-    fallback_delay = 60  # used if no Retry-After header present
+    fallback_delay = 60
 
     for attempt in range(max_retries):
         try:
@@ -179,7 +110,6 @@ def call_api_with_retry(client: anthropic.Anthropic, **kwargs) -> Any:
         except anthropic.RateLimitError as exc:
             if attempt == max_retries - 1:
                 raise
-            # Honour the Retry-After header when present
             retry_after = None
             if hasattr(exc, "response") and exc.response is not None:
                 retry_after = exc.response.headers.get("retry-after")
@@ -210,7 +140,6 @@ def compact_messages(messages: list, keep_recent: int = 2) -> list:
     model retains recent context. Older exchanges are collapsed to a one-liner
     so their tool_use_id references remain valid without burning tokens.
     """
-    # Indices of user messages that carry tool_result blocks
     tr_indices = [
         i for i, m in enumerate(messages)
         if m["role"] == "user"
@@ -242,7 +171,12 @@ async def run_agent() -> None:
     log.info("Starting agent run | model=%s max_turns=%d turn_delay=%ss", MODEL, MAX_TURNS, TURN_DELAY)
     log.info("Prompt length: %d characters", len(prompt))
 
-    tools, tool_server_map = await discover_mcp_tools(mcp_config)
+    mcp_tools, tool_server_map = await discover_mcp_tools(mcp_config)
+
+    # Combine MCP tools with built-in memory tools.
+    # Memory tools go last so cache_control lands on a stable entry.
+    tools = mcp_tools + BUILTIN_TOOLS
+    log.info("Built-in tools registered: %s", sorted(BUILTIN_TOOL_NAMES))
 
     # Mark the last tool for prompt caching — Anthropic caches everything up to
     # this point across turns, so tool definitions don't burn TPM on every call.
@@ -274,7 +208,6 @@ async def run_agent() -> None:
         response = call_api_with_retry(client, **kwargs)
         log.info("stop_reason=%s usage=%s", response.stop_reason, response.usage)
 
-        # Add assistant response to conversation history
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason == "end_turn":
@@ -296,16 +229,19 @@ async def run_agent() -> None:
                     json.dumps(block.input)[:300],
                 )
 
-                server_config = tool_server_map.get(block.name)
-                if server_config:
-                    try:
-                        result = await call_mcp_tool(block.name, block.input, server_config)
-                    except Exception as exc:
-                        result = f"Error calling tool {block.name}: {exc}"
-                        log.error(result)
+                if block.name in BUILTIN_TOOL_NAMES:
+                    result = call_builtin_tool(block.name, block.input)
                 else:
-                    result = f"Error: Tool '{block.name}' not found in any connected MCP server"
-                    log.warning(result)
+                    server_config = tool_server_map.get(block.name)
+                    if server_config:
+                        try:
+                            result = await call_mcp_tool(block.name, block.input, server_config)
+                        except Exception as exc:
+                            result = f"Error calling tool {block.name}: {exc}"
+                            log.error(result)
+                    else:
+                        result = f"Error: tool '{block.name}' not found in any connected MCP server"
+                        log.warning(result)
 
                 result = truncate_tool_result(result)
                 log.info("Tool result (%d chars): %s...", len(result), result[:200])
@@ -321,7 +257,6 @@ async def run_agent() -> None:
 
         elif response.stop_reason == "max_tokens":
             log.warning("Hit max_tokens limit on turn %d, continuing...", turn)
-            # Continue — Claude may resume in the next turn
 
         else:
             log.warning("Unexpected stop_reason: %s — stopping", response.stop_reason)
