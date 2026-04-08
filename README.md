@@ -23,7 +23,7 @@ agents/
 │   ├── gmail-mcp/              # Gmail MCP server deployment
 │   ├── gcal-mcp/               # Google Calendar MCP server deployment
 │   └── mac-bridge/             # ExternalName service for Mac mini bridge
-├── runner/                     # Agent runner container (reads AGENT.md, calls Claude)
+├── runner/                     # Agent runner container (run_agent.py, mcp_client.py, memory.py)
 ├── mcps/                       # MCP server implementations
 │   ├── gmail/                  # Gmail MCP server (Python/FastAPI)
 │   └── gcal/                   # Google Calendar MCP server (Python/FastAPI)
@@ -120,9 +120,32 @@ After pushing a new runner image, update `RUNNER_TAG` in the Makefile and run `m
 
 Secrets are never committed to this repository. See `docs/secrets.md` for the full list of required secrets and how to create them with `kubectl create secret`.
 
-## MCP Server Architecture
+## Tool Architecture
 
-All MCP servers expose an HTTP/SSE endpoint. The agent runner connects to each server, discovers available tools, and proxies tool calls during the Claude agentic loop. See `docs/mcp-setup.md` for setup instructions.
+The agent runner exposes two categories of tools to Claude:
+
+**Built-in tools** (in-process, no network call):
+| Tool | Purpose |
+|------|---------|
+| `memory_read` | Read a file from `/memory` |
+| `memory_write` | Write/overwrite a file in `/memory` |
+| `memory_list` | List a `/memory` directory |
+| `memory_delete` | Delete a file from `/memory` |
+
+Implemented in `runner/memory.py`. Built-in tools are checked first in the dispatch loop.
+
+**External MCP tools** (HTTP/SSE):
+The agent runner connects to each configured MCP server, discovers available tools, and proxies tool calls during the Claude agentic loop. Implemented in `runner/mcp_client.py`. See `docs/mcp-setup.md` for MCP server setup.
+
+The runner module structure:
+```
+runner/
+  run_agent.py    # main agentic loop and prompt loading
+  mcp_client.py   # MCP session management, tool discovery, HTTP dispatch
+  memory.py       # built-in memory_* tools, in-process filesystem access
+  Dockerfile
+  requirements.txt
+```
 
 ## Timezone
 

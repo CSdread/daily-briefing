@@ -118,11 +118,11 @@ Claude composes briefing email (HTML)
      ▼
 gmail_send → sends email to BRIEFING_EMAIL
      │
-     ▼ (Pass 2: write memory updates)
-     ├─ Write /memory/calendar_events/* (append shown_on dates)
-     ├─ Write /memory/email_threads/* (summaries, importance, prune old)
-     ├─ Write /memory/people/* (new/updated relationship inferences)
-     └─ Write /memory/escalations.json (increment counters, mark resolved)
+     ▼ (Pass 2: write memory updates via built-in tools)
+     ├─ memory_write calendar_events/* (append shown_on dates)
+     ├─ memory_write / memory_delete email_threads/* (update summaries, prune old)
+     ├─ memory_write people/* (new/updated relationship inferences)
+     └─ memory_write escalations.json (increment counters, mark resolved)
      │
      ▼
 Agent returns end_turn → Pod exits 0
@@ -148,12 +148,25 @@ Memory is backed by an NFS PersistentVolume on `soma.bhavana.local` at `/kube-vo
 | `/memory/calendar_events/{event_id}.json` | Event ID, dates shown | Keep event display consistent across the 3-day window |
 | `/memory/escalations.json` | Unresolved flagged items with counters | Track items not actioned across multiple days |
 
+### Built-in Memory Tools
+
+Memory is accessed via four tools registered natively in the runner (not via any MCP server):
+
+| Tool | Description |
+|------|-------------|
+| `memory_read` | Read a file at a path relative to `/memory` |
+| `memory_write` | Write/overwrite a file; creates parent directories |
+| `memory_list` | List contents of a `/memory` subdirectory |
+| `memory_delete` | Delete a file |
+
+These are implemented in `runner/memory.py` and dispatched in-process by `runner/run_agent.py` before the MCP tool lookup. They are registered alongside MCP tools in the Anthropic API call so Claude can call them the same way as any other tool.
+
 ### Two-Pass Pattern
 
-1. **Before fetching:** read relevant memory files to skip redundant API calls and enrich names with known relationships.
-2. **After sending:** batch all writes — never write before the email is sent.
+1. **Before fetching:** call `memory_read` / `memory_list` to skip redundant API calls and enrich names with known relationships.
+2. **After sending:** batch all `memory_write` / `memory_delete` calls — never write before the email is sent.
 
-Memory is optional. If `/memory/index.md` is unreadable (volume not mounted), the agent runs without it.
+Memory is optional. If `memory_read index.md` returns an error (volume not mounted), the agent runs without it.
 
 ---
 
@@ -167,7 +180,7 @@ The `agent-runner` ServiceAccount has minimal, read-only permissions:
 | pods | get, list, watch | agents namespace |
 | jobs | get, list, watch | agents namespace |
 
-No write access to any Kubernetes resources. MCP tools are the only way the agent interacts with external systems.
+No write access to any Kubernetes resources. MCP tools and built-in memory tools are the only way the agent interacts with external systems or persists state.
 
 ---
 
@@ -190,22 +203,52 @@ kubectl patch configmap daily-briefing-config -n agents \
 
 ---
 
-## MCP Server Architecture
+## Tool Architecture
 
-All MCP servers use HTTP/SSE transport (not stdio) for compatibility with Kubernetes networking.
+The runner presents two categories of tools to Claude:
+
+### 1. Built-in Tools (in-process)
+
+Implemented in `runner/memory.py`, dispatched directly by the runner without any network call. Currently: `memory_read`, `memory_write`, `memory_list`, `memory_delete`.
+
+```
+Claude tool_use (memory_*)
+     │
+     ▼
+run_agent.py dispatch
+     │
+     ▼  (BUILTIN_TOOL_NAMES check)
+memory.py → call_builtin_tool()
+     │
+     ▼
+/memory filesystem (NFS PVC)
+```
+
+### 2. External MCP Tools (HTTP)
+
+Implemented in `runner/mcp_client.py`. All MCP servers use HTTP/SSE or StreamableHTTP transport for compatibility with Kubernetes networking.
 
 ```
 MCP Server (Python FastAPI)
-├── GET /sse     → SSE stream for MCP protocol
+├── GET /sse      → SSE stream for MCP protocol
 ├── POST /message → Client-to-server messages
-└── GET /health  → Liveness probe
+└── GET /health   → Liveness probe
 ```
 
-The agent runner acts as an MCP client:
-1. Connects to each server's `/sse` endpoint
-2. Receives tool definitions (list_tools)
-3. For each Claude `tool_use` block: calls the server's `call_tool`
-4. Returns `tool_result` to Claude
+```
+Claude tool_use (any other tool)
+     │
+     ▼
+run_agent.py dispatch
+     │
+     ▼  (tool_server_map lookup)
+mcp_client.py → call_mcp_tool()
+     │
+     ▼
+MCP server (HTTP/SSE)
+```
+
+Tool dispatch order: built-in tools are checked first; if not matched, the MCP routing table is used. Both tool sets are registered together in the Anthropic API call so Claude sees them as a unified tool list.
 
 ---
 
