@@ -36,6 +36,9 @@ Begin each run by calling `memory_read` with path `index.md`. If it returns an e
   email_threads/{thread_id}.json  # one file per Gmail thread
   calendar_events/{event_id}.json # event IDs and the dates they were shown
   escalations.json                # unresolved flagged items across runs
+  projects/{slug}.json            # ongoing topics that aggregate context across sources
+  patterns/{slug}.json            # recurring observations stored for future use only
+  briefings/{date}.html           # archive of the last 7 generated briefing emails
 ```
 
 ### Two-pass pattern
@@ -51,6 +54,8 @@ Begin each run by calling `memory_read` with path `index.md`. If it returns an e
 - **Pruning:** When updating an email thread file, if `last_message_at` is older than 30 days and `pending_action` is false, delete the file instead of updating it.
 - **Errors:** If a memory read or write fails, note it briefly and continue. Never retry or block.
 - **Memory never overrides live data:** Memory is supplementary context. Calendar events, email content, and home sensor values must always come from their live sources. If memory and a live source conflict, trust the live source and update memory to match.
+- **Projects:** A project groups related items from any source under a shared topic (e.g., "travel-trailer", "kitchen-remodel"). During source processing, match items against known projects and surface the project as context in the briefing. After sending, update project files with new activity. Only create a new project when 2+ independent items clearly share a common ongoing topic — don't create projects for one-off items.
+- **Patterns:** Write observed recurring patterns to `patterns/` for future reference only. Never read pattern files back during a run to influence the current briefing.
 
 ### Schemas
 
@@ -109,11 +114,47 @@ Begin each run by calling `memory_read` with path `index.md`. If it returns an e
 ]
 ```
 
+**`projects/{slug}.json`**
+```json
+{
+  "slug": "travel-trailer",
+  "name": "Travel Trailer",
+  "description": "Ongoing activity related to the travel trailer — maintenance, trips, purchases, repairs",
+  "status": "active",
+  "open_items": [
+    "Confirm service appointment for May",
+    "Research weight distribution hitch options"
+  ],
+  "recent_summary": "Three emails this week about hitch replacement and a service appointment being scheduled",
+  "source_refs": {
+    "email_thread_ids": ["abc123", "def456"],
+    "reminder_ids": []
+  },
+  "first_seen": "2026-04-01",
+  "last_updated": "2026-04-08"
+}
+```
+
+**`patterns/{slug}.json`**
+```json
+{
+  "slug": "friday-pickup-location-varies",
+  "description": "Devir's Friday pickup location varies between Hinkle Fun Center and school — check calendar rather than assuming",
+  "observed_on": ["2026-04-05", "2026-04-08"],
+  "times_seen": 2,
+  "sources": ["calendar"],
+  "first_seen": "2026-04-05",
+  "last_updated": "2026-04-08"
+}
+```
+
 ---
 
 ## Sources to Gather
 
 Never make up data, all things listed should be backed by an item in one of the sources.
+
+If memory is available, begin by calling `memory_list` with path `projects` to load the list of known project slugs. Hold this list in context while processing all sources — match items against it as you go.
 
 ### 1. Google Calendar
 
@@ -149,6 +190,7 @@ If memory is available:
 - If `importance` is `"low"` and there is no new activity (`last_message_at` unchanged), skip this thread entirely — do not include it in the email.
 - If the thread is new or has new activity, read it, assess importance, and call `memory_write` to update the file after sending.
 - Threads marked `pending_action: true` must appear in every email until resolved, using the stored summary.
+- As you process each thread, check whether its subject or content clearly relates to a known project. If so, tag it mentally — it will be grouped under that project in the email and used to update the project file after sending.
 
 ### 3. iMessages (via mac-bridge)
 
@@ -159,6 +201,7 @@ If memory is available:
 
 If memory is available:
 - When you encounter a sender name or number, call `memory_list` with path `people` then `memory_read` for any likely match by alias. If found, use their relationship for context (e.g., "Jenn (wife)"). If not found and you have enough signal from this and other sources, call `memory_write` to create a stub with `confidence: "low"`.
+- Check whether conversation topics relate to a known project and tag accordingly.
 
 ### 4. Reminders (via mac-bridge)
 
@@ -263,6 +306,17 @@ Build the body as valid HTML following this structure and style. Omit any sectio
     </ul>
   </div>
 
+  <!-- Active Projects (only if items from any source match a project) -->
+  <div class="section">
+    <h2>Projects</h2>
+    <!-- One block per active project that had activity today: -->
+    <div class="day-heading">[Project Name]</div>
+    <ul>
+      <li>[Summary of current status and open items]</li>
+      <li>[New activity from today — email, message, reminder, or calendar item]</li>
+    </ul>
+  </div>
+
   <!-- Pending Responses -->
   <div class="section">
     <h2>Pending Responses</h2>
@@ -325,8 +379,10 @@ After sending the email, if memory is available, perform these writes in order:
 2. **Email threads:** for each thread processed, call `memory_write` to create or update its file. Call `memory_delete` for thread files where `last_message_at` is older than 30 days and `pending_action` is false.
 3. **People:** for any new person encountered with 2+ independent signals (calendar + email, repeated first-name usage, etc.), call `memory_write` to create or update their file. Update `last_updated` on existing entries when new notes are learned.
 4. **Escalations:** call `memory_read` on `escalations.json` (create as `[]` if missing). For each unresolved item shown in today's email, increment `times_flagged` and update `last_flagged`. Add newly flagged items. Mark `resolved: true` for items where the underlying thread is no longer active. Call `memory_write` to save.
-5. **Briefing archive:** call `memory_write` with path `briefings/{{ DATE }}.html` and the full HTML body of the email that was sent. Then call `memory_list` with path `briefings` and delete any file whose date is more than 7 days before today using `memory_delete`. Keep exactly the last 7 days.
-6. **Index:** call `memory_read` on `index.md` — if it errored earlier (memory was unavailable), skip remaining writes. Otherwise if the file does not yet exist, call `memory_write` with path `index.md` and content `# Daily Briefing Memory\nInitialized: {{ TODAY }}\n`.
+5. **Projects:** for each project that had matching activity today, call `memory_read` on `projects/{slug}.json`, update `recent_summary`, `open_items`, `source_refs`, and `last_updated`, then call `memory_write`. If 2+ items from today clearly share a new topic that has no existing project, create a new project file. Do not create a project for a single item or one-off references.
+6. **Patterns:** if you observed a recurring theme across this run or compared to previous runs (same question asked repeatedly, same type of item appearing on a predictable schedule, a person's communication style), write or update a `patterns/{slug}.json` file. Never create a pattern from a single occurrence. Patterns are written for future reference only — they must not influence the current briefing.
+7. **Briefing archive:** call `memory_write` with path `briefings/{{ DATE }}.html` and the full HTML body of the email that was sent. Then call `memory_list` with path `briefings` and delete any file whose date is more than 7 days before today using `memory_delete`. Keep exactly the last 7 days.
+8. **Index:** call `memory_read` on `index.md` — if it errored earlier (memory was unavailable), skip remaining writes. Otherwise if the file does not yet exist, call `memory_write` with path `index.md` and content `# Daily Briefing Memory\nInitialized: {{ TODAY }}\n`.
 
 Then confirm with a brief message like:
 "Daily briefing sent to [email]. Covered: calendar (N events), N pending responses, N reminders, home status."
