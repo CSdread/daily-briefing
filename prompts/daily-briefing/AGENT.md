@@ -169,6 +169,8 @@ Each event in the results includes a full Mountain Time date (`YYYY-MM-DD HH:MM 
 - Note any multi-person meetings, appointments with locations, or events with prep requirements
 - Birthdays are important as well and need to be noted and listed in a separate section. Birthdays should be listed for the week being generated looking forward two weeks.
 
+- Deduplicate events between different calendars, if there is one event called Pickup Dinner and another called Dinner Pickup and they overlap on different calendars and can be shown to be the same event, then merge them and make note in memory if it is available.
+
 If memory is available:
 - After sending: for each event shown, call `memory_write` to update `calendar_events/{event_id}.json`, appending today's date to `shown_on`. This is metadata only — always use live calendar data for event details.
 
