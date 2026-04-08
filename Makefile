@@ -63,7 +63,7 @@ release-mac-bridge: build-mac-bridge push-mac-bridge
 
 # ─── Deploy ──────────────────────────────────────────────────────────────────
 
-.PHONY: deploy deploy-ns deploy-rbac deploy-mcps deploy-briefing deploy-all
+.PHONY: deploy deploy-ns deploy-rbac deploy-mcps deploy-storage deploy-briefing deploy-all
 
 deploy-ns:
 	kubectl apply -f k8s/agents/namespace.yaml
@@ -76,7 +76,10 @@ deploy-mcps:
 	kubectl apply -f k8s/agents/gcal-mcp/
 	kubectl apply -f k8s/agents/mac-bridge/
 
-deploy-briefing:
+deploy-storage:
+	kubectl apply -f k8s/agents/daily-briefing/storage.yaml
+
+deploy-briefing: deploy-storage
 	kubectl apply -f k8s/agents/daily-briefing/cronjob.yaml
 
 deploy-all: deploy-ns deploy-rbac deploy-mcps update-config deploy-briefing
@@ -166,7 +169,8 @@ help:
 	@echo ""
 	@echo "Deploy"
 	@echo "  deploy-all           Deploy everything (ns, rbac, mcps, config, cronjob)"
-	@echo "  deploy-briefing      Apply cronjob.yaml only"
+	@echo "  deploy-storage       Apply PV + PVC for agent memory"
+	@echo "  deploy-briefing      Apply storage + cronjob.yaml"
 	@echo "  update-config        Reload AGENT.md + mcp.json into ConfigMap"
 	@echo ""
 	@echo "Run"
