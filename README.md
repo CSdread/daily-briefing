@@ -80,16 +80,19 @@ make logs               # Follow logs from briefing-manual job
 
 The daily briefing agent uses a persistent filesystem-based memory store mounted at `/memory` in the agent container. Memory is backed by an NFS PersistentVolume (`agent-daily-briefing-1` on `soma.bhavana.local`).
 
-Memory is organized into four areas:
+Memory is organized into seven areas:
 
 | Path | Purpose |
 |------|---------|
 | `/memory/people/{slug}.json` | Known people — names, aliases, relationships inferred from communications |
 | `/memory/email_threads/{thread_id}.json` | Cached summaries and importance decisions for Gmail threads |
-| `/memory/calendar_events/{event_id}.json` | Calendar event IDs and the dates they were shown |
+| `/memory/calendar_events/{event_id}.json` | Metadata only — which dates an event appeared (never substitutes live data) |
 | `/memory/escalations.json` | Unresolved flagged items tracked across runs |
+| `/memory/projects/{slug}.json` | Ongoing topics that aggregate context from all sources (email, iMessage, reminders, calendar) |
+| `/memory/patterns/{slug}.json` | Recurring observations stored for future reference — never used to influence the current briefing |
+| `/memory/briefings/{date}.html` | Rolling 7-day archive of sent briefing emails |
 
-The agent reads memory before processing each source (to skip redundant work and enrich context with known relationships), and writes updates after the email is sent. Memory is optional — if the volume is not mounted, the agent runs without it.
+The agent reads memory before processing each source and writes updates after the email is sent. Memory is optional — if the volume is not mounted, the agent runs without it. Live sources (calendar, email, sensors) are always authoritative over memory.
 
 See `prompts/daily-briefing/AGENT.md` for the full memory schema and per-source instructions.
 

@@ -463,11 +463,20 @@ PV/PVC: `agent-daily-briefing-1`, 500Mi, ReadWriteMany, NFS at `soma.bhavana.loc
   index.md                        # presence marker; written on first run
   people/{slug}.json              # known people with relationships + aliases
   email_threads/{thread_id}.json  # summaries, importance, action status
-  calendar_events/{event_id}.json # event IDs and dates shown
+  calendar_events/{event_id}.json # metadata only (shown_on dates); never substitutes live data
   escalations.json                # unresolved flagged items with counters
+  projects/{slug}.json            # ongoing topics aggregating context from all sources
+  patterns/{slug}.json            # recurring observations; stored for future use, never read back
+  briefings/{date}.html           # rolling 7-day archive of sent emails
 ```
 
 See `prompts/daily-briefing/AGENT.md` for full schemas and per-source instructions.
+
+### Key Constraints Discovered in Production
+
+- **Memory must not override live data.** An early bug caused the agent to store calendar event types in people notes (e.g., "Calendar includes Marriage Counseling"), which it then used to assert appointments that didn't exist in the live calendar. Fix: people notes are restricted to stable biographical facts only; calendar and email content always come from live sources.
+- **Projects require 2+ signals** before being created — single mentions don't warrant a project file.
+- **Patterns are write-only** during any given run — they are stored for future analysis but must not influence the current briefing.
 
 ### Two-Pass Pattern
 

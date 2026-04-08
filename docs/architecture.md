@@ -143,10 +143,13 @@ Memory is backed by an NFS PersistentVolume on `soma.bhavana.local` at `/kube-vo
 | Path | Content | Purpose |
 |------|---------|---------|
 | `/memory/index.md` | Presence marker | Agent reads this to confirm memory is live; created on first run |
-| `/memory/people/{slug}.json` | Name, aliases, email, relationship, notes | Enrich output with known relationships; avoid re-inferring each run |
+| `/memory/people/{slug}.json` | Name, aliases, email, relationship, stable notes | Enrich output with known relationships; avoid re-inferring each run |
 | `/memory/email_threads/{thread_id}.json` | Summary, importance, timestamps, shown count | Skip re-reading unchanged threads; surface persistent action items |
-| `/memory/calendar_events/{event_id}.json` | Event ID, dates shown | Keep event display consistent across the 3-day window |
+| `/memory/calendar_events/{event_id}.json` | Event ID, dates shown (metadata only) | Track which dates an event appeared; never substitutes live calendar data |
 | `/memory/escalations.json` | Unresolved flagged items with counters | Track items not actioned across multiple days |
+| `/memory/projects/{slug}.json` | Name, description, open items, source refs, summary | Aggregate context from all sources under an ongoing topic |
+| `/memory/patterns/{slug}.json` | Recurring observation, dates seen, sources | Store recognized patterns for future use — never read back during a run |
+| `/memory/briefings/{date}.html` | Full HTML of generated email | Rolling 7-day archive of sent briefings |
 
 ### Built-in Memory Tools
 
@@ -163,10 +166,12 @@ These are implemented in `runner/memory.py` and dispatched in-process by `runner
 
 ### Two-Pass Pattern
 
-1. **Before fetching:** call `memory_read` / `memory_list` to skip redundant API calls and enrich names with known relationships.
-2. **After sending:** batch all `memory_write` / `memory_delete` calls — never write before the email is sent.
+1. **Before fetching:** load known projects list, then per-source call `memory_read` / `memory_list` to skip redundant API calls, enrich names, and match items to projects.
+2. **After sending:** batch all `memory_write` / `memory_delete` calls in order: calendar events → email threads → people → escalations → projects → patterns → briefing archive → index.
 
 Memory is optional. If `memory_read index.md` returns an error (volume not mounted), the agent runs without it.
+
+**Key constraint:** memory never overrides live data. Calendar event details, email content, and sensor values always come from their live sources. If memory and a live source conflict, trust the live source and update memory. People notes must contain only stable biographical facts — never calendar events or time-sensitive information.
 
 ---
 
