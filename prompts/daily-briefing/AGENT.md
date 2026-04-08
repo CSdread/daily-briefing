@@ -325,7 +325,8 @@ After sending the email, if memory is available, perform these writes in order:
 2. **Email threads:** for each thread processed, call `memory_write` to create or update its file. Call `memory_delete` for thread files where `last_message_at` is older than 30 days and `pending_action` is false.
 3. **People:** for any new person encountered with 2+ independent signals (calendar + email, repeated first-name usage, etc.), call `memory_write` to create or update their file. Update `last_updated` on existing entries when new notes are learned.
 4. **Escalations:** call `memory_read` on `escalations.json` (create as `[]` if missing). For each unresolved item shown in today's email, increment `times_flagged` and update `last_flagged`. Add newly flagged items. Mark `resolved: true` for items where the underlying thread is no longer active. Call `memory_write` to save.
-5. **Index:** call `memory_read` on `index.md` — if it errored earlier (memory was unavailable), skip remaining writes. Otherwise if the file does not yet exist, call `memory_write` with path `index.md` and content `# Daily Briefing Memory\nInitialized: {{ TODAY }}\n`.
+5. **Briefing archive:** call `memory_write` with path `briefings/{{ DATE }}.html` and the full HTML body of the email that was sent. Then call `memory_list` with path `briefings` and delete any file whose date is more than 7 days before today using `memory_delete`. Keep exactly the last 7 days.
+6. **Index:** call `memory_read` on `index.md` — if it errored earlier (memory was unavailable), skip remaining writes. Otherwise if the file does not yet exist, call `memory_write` with path `index.md` and content `# Daily Briefing Memory\nInitialized: {{ TODAY }}\n`.
 
 Then confirm with a brief message like:
 "Daily briefing sent to [email]. Covered: calendar (N events), N pending responses, N reminders, home status."
