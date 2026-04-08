@@ -41,7 +41,7 @@ The agents platform runs autonomous Claude agents as Kubernetes CronJobs. Each a
 │  │    └──────────────┘ └──────────┘ └──────────┘ └─────────────────┘ │ │
 │  │                                                                       │ │
 │  │  ┌──────────────────────────────────────────────────────────────┐   │ │
-│  │  │  PVC: agent-daily-briefing-1  →  NFS: soma.bhavana.local     │   │ │
+│  │  │  PVC: agent-daily-briefing  →  NFS: soma.bhavana.local        │   │ │
 │  │  │  /kube-volumes/agent-daily-briefing-1  (mounted at /memory)  │   │ │
 │  │  └──────────────────────────────────────────────────────────────┘   │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
@@ -189,21 +189,40 @@ No write access to any Kubernetes resources. MCP tools and built-in memory tools
 
 ---
 
-## ConfigMap-Driven Prompts
+## Agent Configuration
 
-The key design principle: **the agent's behavior is entirely defined by `AGENT.md`** in a ConfigMap. No code changes needed to change what the agent does.
+Each agent is defined entirely by two files in `prompts/<name>/`:
 
 ```
-ConfigMap: daily-briefing-config
+prompts/daily-briefing/
+├── AGENT.md      → the Claude system prompt
+└── agent.yaml    → all configuration (model, schedule, resources, MCP servers, secrets)
+```
+
+`agent.yaml` is the single source of truth. The generator script (`scripts/deploy_agent.py`)
+reads it and produces all required Kubernetes resources — ConfigMap, CronJob, manual Job,
+PV, and PVC — so no per-agent k8s directory is needed.
+
+### Config → Kubernetes mapping
+
+```
+agent.yaml
+├── model / runner.*        → env vars on the agent-runner container
+├── cron.schedule / .timezone → CronJob spec
+├── resources.*             → container resource requests and limits
+├── secrets[]               → secretKeyRef env vars
+├── memory.*                → PV + PVC (only when memory.enabled: true)
+└── mcpServers              → converted to mcp.json, stored in ConfigMap
+
+ConfigMap: <name>-config
 ├── AGENT.md    → mounted at /config/AGENT.md
-└── mcp.json    → mounted at /config/mcp.json
+└── mcp.json    → mounted at /config/mcp.json (generated from mcpServers block)
 ```
 
-To change the agent's behavior:
+To update a running agent's prompt or MCP config:
 ```bash
-kubectl patch configmap daily-briefing-config -n agents \
-  --patch-file new-agent.yaml
-# Next job run picks up the new prompt automatically
+make update-agent-config AGENT=daily-briefing
+# Regenerates and applies the ConfigMap only. Next job run picks it up.
 ```
 
 ---

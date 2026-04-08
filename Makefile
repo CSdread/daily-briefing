@@ -82,42 +82,48 @@ deploy-storage:
 deploy-briefing: deploy-storage
 	kubectl apply -f k8s/agents/daily-briefing/cronjob.yaml
 
-deploy-all: deploy-ns deploy-rbac deploy-mcps update-config deploy-briefing
+deploy-all: deploy-ns deploy-rbac deploy-mcps
 
-# ─── Config (AGENT.md + mcp.json) ────────────────────────────────────────────
+# ─── Agent deployment (generic) ──────────────────────────────────────────────
+# AGENT= must be set to the name of a directory under prompts/
+# Example: make deploy-agent AGENT=daily-briefing
 
-.PHONY: update-config
+.PHONY: deploy-agent preview-agent update-agent-config run-agent logs-agent
 
-update-config:
-	kubectl create configmap daily-briefing-config \
-		--from-file=AGENT.md=prompts/daily-briefing/AGENT.md \
-		--from-file=mcp.json=k8s/agents/daily-briefing/mcp.json \
-		-n $(NAMESPACE) \
-		--dry-run -o yaml | kubectl apply -f -
+ifndef AGENT
+AGENT_REQUIRED = $(error AGENT is not set. Usage: make <target> AGENT=<agent-name>)
+else
+AGENT_REQUIRED =
+endif
 
-# ─── Manual job trigger ───────────────────────────────────────────────────────
+# Generate and apply all resources (ConfigMap, CronJob, Job, PV/PVC if needed)
+deploy-agent:
+	$(AGENT_REQUIRED)
+	uv run scripts/deploy_agent.py $(AGENT) --apply
 
-.PHONY: run run-once
+# Generate and print manifests to stdout without applying
+preview-agent:
+	$(AGENT_REQUIRED)
+	uv run scripts/deploy_agent.py $(AGENT)
 
-# Delete existing manual job and reapply (keeps a single persistent manual job)
-run:
-	kubectl delete job briefing-manual-1 -n $(NAMESPACE) --ignore-not-found
-	kubectl apply -f k8s/agents/daily-briefing/job-manual.yaml
-	@echo "Job started. Run 'make logs' to follow output."
+# Regenerate and apply only the ConfigMap (prompt + mcp.json)
+update-agent-config:
+	$(AGENT_REQUIRED)
+	uv run scripts/deploy_agent.py $(AGENT) --config-only
 
-# One-off job with a unique timestamped name (keeps history)
-run-once:
-	@JOB_NAME=briefing-run-$$(date +%s) && \
-	sed "s/name: briefing-manual-1/name: $$JOB_NAME/" \
-		k8s/agents/daily-briefing/job-manual.yaml | kubectl apply -f - && \
-	echo "Started job: $$JOB_NAME"
+# Delete existing manual Job and start a new one
+run-agent:
+	$(AGENT_REQUIRED)
+	uv run scripts/deploy_agent.py $(AGENT) --run
 
-# ─── Logs ─────────────────────────────────────────────────────────────────────
+# Follow logs from the manual Job
+logs-agent:
+	$(AGENT_REQUIRED)
+	kubectl logs -n $(NAMESPACE) -f job/$(AGENT)-manual -c agent-runner
 
-.PHONY: logs status
+# ─── Logs / status ────────────────────────────────────────────────────────────
 
-logs:
-	kubectl logs -n $(NAMESPACE) -f job/briefing-manual-1 -c agent-runner
+.PHONY: status
 
 status:
 	@echo "=== CronJobs ==="
@@ -168,16 +174,15 @@ help:
 	@echo "  release-mac-bridge   Build and push mac-bridge only"
 	@echo ""
 	@echo "Deploy"
-	@echo "  deploy-all           Deploy everything (ns, rbac, mcps, config, cronjob)"
-	@echo "  deploy-storage       Apply PV + PVC for agent memory"
-	@echo "  deploy-briefing      Apply storage + cronjob.yaml"
-	@echo "  update-config        Reload AGENT.md + mcp.json into ConfigMap"
+	@echo "  deploy-all                    Deploy ns, rbac, and MCP servers"
+	@echo "  deploy-agent AGENT=<name>     Generate + apply all agent resources"
+	@echo "  preview-agent AGENT=<name>    Print generated manifests without applying"
+	@echo "  update-agent-config AGENT=<name>  Reload ConfigMap (prompt + mcp.json)"
 	@echo ""
 	@echo "Run"
-	@echo "  run                  Delete + reapply job-manual.yaml"
-	@echo "  run-once             Start a new uniquely-named job (keeps history)"
-	@echo "  logs                 Follow logs from briefing-manual job"
-	@echo "  status               Show cronjobs, jobs, and pods"
+	@echo "  run-agent AGENT=<name>        Delete + apply manual Job"
+	@echo "  logs-agent AGENT=<name>       Follow logs from manual Job"
+	@echo "  status                        Show cronjobs, jobs, and pods"
 	@echo ""
 	@echo "Variables"
 	@echo "  RUNNER_TAG=N         Override agent-runner image tag (default: $(RUNNER_TAG))"
