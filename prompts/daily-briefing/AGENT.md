@@ -236,6 +236,9 @@ Use the Home Assistant MCP to check:
 - Get outdoor temperature sensor if available
 - Get any weather-related sensors (rain, UV, etc.) for context
 
+**Entities To Ignore**
+- any entities that are input booleans with a persons name are used to gate notifications for that user, for that item. These are not entities that need to be addressed and can be ignored.
+
 ---
 
 ## Email Format
