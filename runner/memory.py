@@ -98,7 +98,11 @@ def call_builtin_tool(name: str, tool_input: dict) -> str:
         elif name == "memory_write":
             content = tool_input.get("content", "")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # Write to a temp file then rename — rename is atomic on POSIX/NFS,
+            # so readers never see a partial write even if the process is killed mid-write.
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            tmp.rename(target)
             log.info("memory_write: wrote %d bytes to %s", len(content), raw)
             return f"OK: wrote {len(content)} bytes to {raw}"
 

@@ -22,7 +22,7 @@ default). Everything else uses the defaults listed below.
 name: my-agent               # REQUIRED. Used for all k8s resource names.
 
 # ── Agent type ──────────────────────────────────────────────────────────────
-type: cron                   # cron | service (service = future long-running Deployment)
+type: cron                   # cron | service
 
 # ── Model ───────────────────────────────────────────────────────────────────
 model: claude-opus-4-6       # Any Claude model ID.
@@ -33,6 +33,12 @@ runner:
   maxTurns: 50               # Hard cap on agentic loop turns before giving up.
   turnDelay: 15              # Seconds to wait between turns (rate-limit buffer).
   toolResultMaxChars: 3000   # Truncate tool results longer than this.
+
+# ── Service config ──────────────────────────────────────────────────────────
+# Required when type: service. The cron block is ignored for service agents.
+service:
+  port: 8080                 # HTTP server port. Default: 8080
+  resultTtlSeconds: 3600     # Seconds to retain completed run results in memory. Default: 3600
 
 # ── Cron schedule ───────────────────────────────────────────────────────────
 # Required when type: cron.
@@ -95,7 +101,9 @@ secrets: []
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `name` | Yes | — | Agent name; used for all k8s resource names (`<name>-config`, `<name>-manual`, `agent-<name>`) |
-| `type` | No | `cron` | `cron` runs as a Kubernetes CronJob. `service` (future) will run as a long-lived Deployment. |
+| `type` | No | `cron` | `cron` runs as a Kubernetes CronJob. `service` runs as a long-lived Deployment with an HTTP trigger interface. |
+| `service.port` | No | `8080` | Port the HTTP server listens on (service agents only) |
+| `service.resultTtlSeconds` | No | `3600` | Seconds to retain completed run results in memory before eviction (service agents only) |
 | `model` | No | `claude-opus-4-6` | Claude model ID passed to the Anthropic API |
 | `runner.maxTokens` | No | `8192` | `max_tokens` per API call |
 | `runner.maxTurns` | No | `50` | Max loop iterations; agent exits with a warning if reached |
@@ -127,9 +135,23 @@ For an agent named `my-agent` the generator produces:
 |----------|------|-------|
 | ConfigMap | `my-agent-config` | Contains `AGENT.md` and `mcp.json` (generated from `mcpServers`) |
 | CronJob | `my-agent` | Only when `type: cron` |
-| Job | `my-agent-manual` | Manual trigger; same pod spec as CronJob |
+| Job | `my-agent-manual` | Manual trigger; same pod spec as CronJob. Only when `type: cron` |
+| Deployment | `my-agent` | Only when `type: service`. 1 replica, always running |
+| Service | `my-agent` | ClusterIP. Only when `type: service`. Accessible at `my-agent.agents.svc.cluster.local` |
 | PersistentVolume | `agent-my-agent` | Only when `memory.enabled: true` |
 | PersistentVolumeClaim | `agent-my-agent` | Only when `memory.enabled: true` |
+
+## Service agent HTTP API
+
+When `type: service`, the runner exposes three endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Liveness/readiness probe. Always returns `200 {"status": "ok"}` |
+| `POST` | `/trigger` | Start a run. Returns `202 {"run_id": "...", "status": "running"}` or `409` if already running |
+| `GET` | `/status/{run_id}` | Poll result. Returns `{"status": "running\|complete\|failed", ...}` |
+
+Only one run may be active at a time. A second `POST /trigger` while a run is in progress returns `409 Conflict` with the current run's status.
 
 ## Deployment commands
 
@@ -143,9 +165,21 @@ make deploy-agent AGENT=my-agent
 # Update prompt/MCP config on a running agent
 make update-agent-config AGENT=my-agent
 
-# Trigger a manual run
+# Trigger a manual run (cron agents)
 make run-agent AGENT=my-agent
 
-# Follow logs
+# Follow logs (cron agents)
 make logs-agent AGENT=my-agent
+
+# Trigger a run (service agents)
+make trigger-agent AGENT=my-agent
+
+# Poll for result (service agents)
+make status-agent AGENT=my-agent RUN=<run-id>
+
+# Follow logs (service agents)
+make logs-service AGENT=my-agent
+
+# Restart deployment after new image/config (service agents)
+make restart-service AGENT=my-agent
 ```

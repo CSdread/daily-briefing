@@ -169,7 +169,7 @@ def compact_messages(messages: list, keep_recent: int = 2) -> list:
     return messages
 
 
-async def run_agent() -> None:
+async def run_agent() -> str:
     prompt = load_agent_prompt()
     mcp_config = load_mcp_config()
 
@@ -192,6 +192,8 @@ async def run_agent() -> None:
     # System prompt is static across all turns — ideal for caching.
     system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
     messages: list[dict[str, Any]] = [{"role": "user", "content": "Begin."}]
+
+    final_output: str = ""
 
     for turn in range(1, MAX_TURNS + 1):
         log.info("--- Turn %d/%d ---", turn, MAX_TURNS)
@@ -219,6 +221,7 @@ async def run_agent() -> None:
             log.info("Agent completed normally")
             for block in response.content:
                 if hasattr(block, "text") and block.text:
+                    final_output = block.text
                     log.info("Final text output:\n%s", block.text[:500])
             break
 
@@ -271,6 +274,7 @@ async def run_agent() -> None:
         log.warning("Reached max turns (%d) without end_turn", MAX_TURNS)
 
     log.info("Agent run complete")
+    return final_output
 
 
 if __name__ == "__main__":

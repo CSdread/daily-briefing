@@ -51,6 +51,10 @@ DEFAULTS = {
         "successfulJobsHistoryLimit": 3,
         "failedJobsHistoryLimit": 3,
     },
+    "service": {
+        "port": 8080,
+        "resultTtlSeconds": 3600,
+    },
     "resources": {
         "requests": {"cpu": "100m", "memory": "256Mi"},
         "limits": {"cpu": "500m", "memory": "512Mi"},
@@ -97,9 +101,17 @@ def load_config(agent_name: str) -> tuple[dict, str]:
 
     config = deep_merge(DEFAULTS, raw)
 
+    if config["type"] not in ("cron", "service"):
+        print(f"ERROR: unknown type '{config['type']}' — must be 'cron' or 'service'", file=sys.stderr)
+        sys.exit(1)
+
     if config["type"] == "cron" and not config.get("cron", {}).get("schedule"):
         print("ERROR: agent.yaml must specify cron.schedule for type: cron", file=sys.stderr)
         sys.exit(1)
+
+    if config["type"] == "service" and config.get("cron", {}).get("schedule"):
+        print("WARNING: cron.schedule is set but type is 'service' — the schedule will be ignored",
+              file=sys.stderr)
 
     return config, md_path.read_text()
 
@@ -146,7 +158,13 @@ def build_configmap(config: dict, prompt: str) -> dict:
     }
 
 
-def build_pod_spec(config: dict) -> dict:
+def _timezone(config: dict) -> str:
+    """Return the configured timezone, checking cron block for backwards compat."""
+    return config.get("cron", {}).get("timezone", "UTC")
+
+
+def build_pod_spec(config: dict, mode: str = "cron") -> dict:
+    """Build a pod spec for cron (restartPolicy=Never) or service (with probes) mode."""
     name = config["name"]
     runner = config["runner"]
     resources = config["resources"]
@@ -164,8 +182,16 @@ def build_pod_spec(config: dict) -> dict:
         {"name": "MAX_TURNS", "value": str(runner["maxTurns"])},
         {"name": "TURN_DELAY", "value": str(runner["turnDelay"])},
         {"name": "TOOL_RESULT_MAX_CHARS", "value": str(runner["toolResultMaxChars"])},
-        {"name": "TZ", "value": config["cron"].get("timezone", "UTC")},
+        {"name": "TZ", "value": _timezone(config)},
     ]
+
+    if mode == "service":
+        svc = config["service"]
+        env += [
+            {"name": "SERVICE_MODE", "value": "true"},
+            {"name": "SERVICE_PORT", "value": str(svc["port"])},
+            {"name": "RESULT_TTL_SECONDS", "value": str(svc["resultTtlSeconds"])},
+        ]
 
     for secret in config["secrets"]:
         env.append({
@@ -192,7 +218,7 @@ def build_pod_spec(config: dict) -> dict:
             "persistentVolumeClaim": {"claimName": f"agent-{name}"},
         })
 
-    container = {
+    container: dict = {
         "name": "agent-runner",
         "image": f"{RUNNER_IMAGE}:{tag}",
         "imagePullPolicy": "Always",
@@ -208,18 +234,36 @@ def build_pod_spec(config: dict) -> dict:
         },
     }
 
-    return {
+    if mode == "service":
+        port = config["service"]["port"]
+        container["ports"] = [{"containerPort": port, "protocol": "TCP"}]
+        container["livenessProbe"] = {
+            "httpGet": {"path": "/health", "port": port},
+            "periodSeconds": 30,
+            "failureThreshold": 3,
+        }
+        container["readinessProbe"] = {
+            "httpGet": {"path": "/health", "port": port},
+            "initialDelaySeconds": 5,
+            "periodSeconds": 10,
+        }
+
+    pod_spec: dict = {
         "serviceAccountName": "agent-runner",
-        "restartPolicy": "Never",
         "containers": [container],
         "volumes": volumes,
     }
+
+    if mode == "cron":
+        pod_spec["restartPolicy"] = "Never"
+
+    return pod_spec
 
 
 def build_cronjob(config: dict) -> dict:
     name = config["name"]
     cron = config["cron"]
-    pod_spec = build_pod_spec(config)
+    pod_spec = build_pod_spec(config, mode="cron")
 
     return {
         "apiVersion": "batch/v1",
@@ -254,7 +298,7 @@ def build_cronjob(config: dict) -> dict:
 def build_manual_job(config: dict) -> dict:
     name = config["name"]
     cron = config["cron"]
-    pod_spec = build_pod_spec(config)
+    pod_spec = build_pod_spec(config, mode="cron")
 
     return {
         "apiVersion": "batch/v1",
@@ -273,6 +317,49 @@ def build_manual_job(config: dict) -> dict:
                 },
                 "spec": pod_spec,
             },
+        },
+    }
+
+
+def build_deployment(config: dict) -> dict:
+    name = config["name"]
+    pod_spec = build_pod_spec(config, mode="service")
+
+    return {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": name,
+            "namespace": NAMESPACE,
+            "labels": {"app": name, "type": "agent"},
+        },
+        "spec": {
+            "replicas": 1,
+            "selector": {"matchLabels": {"app": name}},
+            "template": {
+                "metadata": {"labels": {"app": name, "type": "agent-service"}},
+                "spec": pod_spec,
+            },
+        },
+    }
+
+
+def build_k8s_service(config: dict) -> dict:
+    name = config["name"]
+    port = config["service"]["port"]
+
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": name,
+            "namespace": NAMESPACE,
+            "labels": {"app": name},
+        },
+        "spec": {
+            "selector": {"app": name},
+            "ports": [{"port": port, "targetPort": port, "protocol": "TCP"}],
+            "type": "ClusterIP",
         },
     }
 
@@ -325,6 +412,9 @@ def render_manifests(config: dict, prompt: str, include_storage: bool = True) ->
     if config["type"] == "cron":
         docs.append(build_cronjob(config))
         docs.append(build_manual_job(config))
+    elif config["type"] == "service":
+        docs.append(build_deployment(config))
+        docs.append(build_k8s_service(config))
 
     if include_storage and config["memory"]["enabled"]:
         mem = config["memory"]

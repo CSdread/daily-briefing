@@ -121,6 +121,45 @@ logs-agent:
 	$(AGENT_REQUIRED)
 	kubectl logs -n $(NAMESPACE) -f job/$(AGENT)-manual -c agent-runner
 
+# ─── Service agent targets ────────────────────────────────────────────────────
+
+.PHONY: trigger-agent status-agent logs-service restart-service
+
+ifndef RUN
+RUN_REQUIRED = $(error RUN is not set. Usage: make status-agent AGENT=<name> RUN=<run-id>)
+else
+RUN_REQUIRED =
+endif
+
+# POST /trigger on a running service agent (via kubectl port-forward)
+trigger-agent:
+	$(AGENT_REQUIRED)
+	@PORT=$$(kubectl get svc $(AGENT) -n $(NAMESPACE) -o jsonpath='{.spec.ports[0].port}' 2>/dev/null); \
+	kubectl port-forward -n $(NAMESPACE) svc/$(AGENT) 18080:$$PORT &>/dev/null & PF_PID=$$!; \
+	sleep 1; \
+	curl -s -X POST http://localhost:18080/trigger | python3 -m json.tool; \
+	kill $$PF_PID 2>/dev/null; true
+
+# GET /status/<run-id> on a running service agent (via kubectl port-forward)
+status-agent:
+	$(AGENT_REQUIRED)
+	$(RUN_REQUIRED)
+	@PORT=$$(kubectl get svc $(AGENT) -n $(NAMESPACE) -o jsonpath='{.spec.ports[0].port}' 2>/dev/null); \
+	kubectl port-forward -n $(NAMESPACE) svc/$(AGENT) 18080:$$PORT &>/dev/null & PF_PID=$$!; \
+	sleep 1; \
+	curl -s http://localhost:18080/status/$(RUN) | python3 -m json.tool; \
+	kill $$PF_PID 2>/dev/null; true
+
+# Follow logs from a service agent Deployment
+logs-service:
+	$(AGENT_REQUIRED)
+	kubectl logs -n $(NAMESPACE) -f deployment/$(AGENT) -c agent-runner
+
+# Restart a service agent Deployment (picks up new image or ConfigMap)
+restart-service:
+	$(AGENT_REQUIRED)
+	kubectl rollout restart deployment/$(AGENT) -n $(NAMESPACE)
+
 # ─── Logs / status ────────────────────────────────────────────────────────────
 
 .PHONY: status
@@ -179,10 +218,16 @@ help:
 	@echo "  preview-agent AGENT=<name>    Print generated manifests without applying"
 	@echo "  update-agent-config AGENT=<name>  Reload ConfigMap (prompt + mcp.json)"
 	@echo ""
-	@echo "Run"
+	@echo "Run (cron agents)"
 	@echo "  run-agent AGENT=<name>        Delete + apply manual Job"
 	@echo "  logs-agent AGENT=<name>       Follow logs from manual Job"
 	@echo "  status                        Show cronjobs, jobs, and pods"
+	@echo ""
+	@echo "Run (service agents)"
+	@echo "  trigger-agent AGENT=<name>              POST /trigger, prints run_id"
+	@echo "  status-agent AGENT=<name> RUN=<run-id>  GET /status/<run-id>, prints result"
+	@echo "  logs-service AGENT=<name>               Follow logs from Deployment"
+	@echo "  restart-service AGENT=<name>            Rollout restart Deployment"
 	@echo ""
 	@echo "Variables"
 	@echo "  RUNNER_TAG=N         Override agent-runner image tag (default: $(RUNNER_TAG))"
