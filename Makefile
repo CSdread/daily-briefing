@@ -6,7 +6,7 @@ GMAIL_IMAGE       := $(REGISTRY)/gmail-mcp
 GCAL_IMAGE        := $(REGISTRY)/gcal-mcp
 MAC_BRIDGE_IMAGE  := $(REGISTRY)/mac-bridge
 
-RUNNER_TAG        ?= 4
+RUNNER_TAG        ?= 5
 GMAIL_TAG         ?= 2
 GCAL_TAG          ?= 2
 MAC_BRIDGE_TAG    ?= 1

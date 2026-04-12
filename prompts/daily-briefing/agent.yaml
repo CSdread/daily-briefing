@@ -25,6 +25,9 @@ memory:
   nfsServer: soma.bhavana.local
   nfsPath: /kube-volumes/agent-daily-briefing-1
 
+skills:
+  - daily-briefing-email
+
 mcpServers:
   home-assistant:
     url: "http://192.168.1.55:8086/mcp"

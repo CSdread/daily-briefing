@@ -388,6 +388,15 @@ def main() -> None:
     elif args.run:
         kubectl_run(config, prompt)
     elif args.apply:
+        # Delete the manual Job before applying — its pod template spec is immutable,
+        # so kubectl apply fails if the image tag changed. --run handles this already;
+        # mirror that behaviour here.
+        if config["type"] == "cron":
+            job_name = f"{config['name']}-manual"
+            subprocess.run(
+                ["kubectl", "delete", "job", job_name, "-n", NAMESPACE, "--ignore-not-found"],
+                check=True,
+            )
         manifests = render_manifests(config, prompt)
         kubectl_apply(manifests)
     else:

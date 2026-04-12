@@ -193,6 +193,13 @@ async def run_agent() -> None:
     system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
     messages: list[dict[str, Any]] = [{"role": "user", "content": "Begin."}]
 
+    # Tools that may only be called once per run (e.g. sending the briefing email).
+    # A second call is blocked and returns an error so Claude doesn't send duplicates.
+    ONE_SHOT_TOOLS: set[str] = {"gmail_send"}
+    fired_once: set[str] = set()
+
+    final_output: str = ""
+
     for turn in range(1, MAX_TURNS + 1):
         log.info("--- Turn %d/%d ---", turn, MAX_TURNS)
 
@@ -234,13 +241,23 @@ async def run_agent() -> None:
                     json.dumps(block.input)[:300],
                 )
 
-                if block.name in BUILTIN_TOOL_NAMES:
+                if block.name in ONE_SHOT_TOOLS and block.name in fired_once:
+                    result = (
+                        f"Error: '{block.name}' has already been called once this run. "
+                        "The email was already sent — do not call it again."
+                    )
+                    log.warning("Blocked duplicate one-shot tool call: %s", block.name)
+                elif block.name in BUILTIN_TOOL_NAMES:
                     result = call_builtin_tool(block.name, block.input)
+                    if block.name in ONE_SHOT_TOOLS:
+                        fired_once.add(block.name)
                 else:
                     server_config = tool_server_map.get(block.name)
                     if server_config:
                         try:
                             result = await call_mcp_tool(block.name, block.input, server_config)
+                            if block.name in ONE_SHOT_TOOLS:
+                                fired_once.add(block.name)
                         except Exception as exc:
                             result = f"Error calling tool {block.name}: {exc}"
                             log.error(result)
