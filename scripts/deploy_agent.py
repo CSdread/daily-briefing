@@ -63,6 +63,7 @@ DEFAULTS = {
     },
     "mcpServers": {},
     "secrets": [],
+    "skills": [],
 }
 
 
@@ -129,9 +130,26 @@ def runner_image_tag() -> str:
     return "latest"
 
 
-def build_configmap(config: dict, prompt: str) -> dict:
+def load_skills(config: dict) -> dict[str, str]:
+    """Load skill markdown files listed in config['skills'] from the skills/ directory."""
+    result: dict[str, str] = {}
+    for skill_name in config.get("skills", []):
+        path = REPO_ROOT / "skills" / f"{skill_name}.md"
+        if not path.exists():
+            print(f"WARNING: skill '{skill_name}' not found at {path}", file=sys.stderr)
+            continue
+        result[skill_name] = path.read_text()
+    return result
+
+
+def build_configmap(config: dict, prompt: str, skills: dict[str, str] | None = None) -> dict:
     name = config["name"]
     mcp_json = mcp_servers_to_json(config["mcpServers"])
+    data: dict[str, str] = {"AGENT.md": prompt, "mcp.json": mcp_json}
+    # Embed each skill as skill_<name>.md. The runner globs skill_*.md at startup
+    # and injects them as separate system prompt blocks before AGENT.md.
+    for skill_name, skill_content in (skills or {}).items():
+        data[f"skill_{skill_name}.md"] = skill_content
     return {
         "apiVersion": "v1",
         "kind": "ConfigMap",
@@ -139,10 +157,7 @@ def build_configmap(config: dict, prompt: str) -> dict:
             "name": f"{name}-config",
             "namespace": NAMESPACE,
         },
-        "data": {
-            "AGENT.md": prompt,
-            "mcp.json": mcp_json,
-        },
+        "data": data,
     }
 
 
@@ -319,8 +334,8 @@ def build_storage(config: dict) -> list[dict]:
     return [pv, pvc]
 
 
-def render_manifests(config: dict, prompt: str, include_storage: bool = True) -> str:
-    docs = [build_configmap(config, prompt)]
+def render_manifests(config: dict, prompt: str, skills: dict[str, str] | None = None, include_storage: bool = True) -> str:
+    docs = [build_configmap(config, prompt, skills)]
 
     if config["type"] == "cron":
         docs.append(build_cronjob(config))
@@ -350,8 +365,8 @@ def kubectl_apply(manifests: str) -> None:
         sys.exit(result.returncode)
 
 
-def kubectl_apply_configmap_only(config: dict, prompt: str) -> None:
-    doc = build_configmap(config, prompt)
+def kubectl_apply_configmap_only(config: dict, prompt: str, skills: dict[str, str] | None = None) -> None:
+    doc = build_configmap(config, prompt, skills)
     manifests = yaml.dump(doc, default_flow_style=False, sort_keys=False)
     kubectl_apply(manifests)
 
@@ -382,9 +397,10 @@ def main() -> None:
     args = parser.parse_args()
 
     config, prompt = load_config(args.agent)
+    skills = load_skills(config)
 
     if args.config_only:
-        kubectl_apply_configmap_only(config, prompt)
+        kubectl_apply_configmap_only(config, prompt, skills)
     elif args.run:
         kubectl_run(config, prompt)
     elif args.apply:
@@ -397,11 +413,11 @@ def main() -> None:
                 ["kubectl", "delete", "job", job_name, "-n", NAMESPACE, "--ignore-not-found"],
                 check=True,
             )
-        manifests = render_manifests(config, prompt)
+        manifests = render_manifests(config, prompt, skills)
         kubectl_apply(manifests)
     else:
         # Default: dry-run / print
-        manifests = render_manifests(config, prompt)
+        manifests = render_manifests(config, prompt, skills)
         print(manifests)
 
 

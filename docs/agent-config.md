@@ -63,6 +63,14 @@ memory:
   nfsServer: ""              # Required when enabled: true. e.g. soma.bhavana.local
   nfsPath: ""                # Required when enabled: true. e.g. /kube-volumes/my-agent
 
+# ── Skills ──────────────────────────────────────────────────────────────────
+# Markdown files from skills/ to inject as separate system prompt blocks before
+# AGENT.md. Each block gets its own cache_control marker so stable skill content
+# is cached independently from the agent-specific prompt.
+skills: []
+# Example:
+#   - daily-briefing-email   # loads skills/daily-briefing-email.md
+
 # ── MCP servers ─────────────────────────────────────────────────────────────
 # Inline definition. The generator converts this block to mcp.json and stores
 # it in the ConfigMap alongside AGENT.md. transport defaults to sse when omitted.
@@ -116,6 +124,7 @@ secrets: []
 | `memory.size` | No | `500Mi` | PV/PVC storage size |
 | `memory.nfsServer` | When memory.enabled | — | NFS server hostname or IP |
 | `memory.nfsPath` | When memory.enabled | — | Absolute path on NFS server |
+| `skills` | No | `[]` | List of skill names to load from `skills/`. Each is injected as a separate cached system prompt block before `AGENT.md`. |
 | `mcpServers` | No | `{}` | Map of MCP server name → `{url, transport?, tools?}` |
 | `secrets` | No | `[]` | List of `{envVar, secretName, secretKey}` entries for additional secrets |
 
@@ -125,7 +134,7 @@ For an agent named `my-agent` the generator produces:
 
 | Resource | Name | Notes |
 |----------|------|-------|
-| ConfigMap | `my-agent-config` | Contains `AGENT.md` and `mcp.json` (generated from `mcpServers`) |
+| ConfigMap | `my-agent-config` | Contains `AGENT.md`, `mcp.json`, and any `skill_<name>.md` files |
 | CronJob | `my-agent` | Only when `type: cron` |
 | Job | `my-agent-manual` | Manual trigger; same pod spec as CronJob |
 | PersistentVolume | `agent-my-agent` | Only when `memory.enabled: true` |

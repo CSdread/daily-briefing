@@ -57,13 +57,13 @@ TURN_DELAY = float(os.environ.get("TURN_DELAY", "15"))
 TOOL_RESULT_MAX_CHARS = int(os.environ.get("TOOL_RESULT_MAX_CHARS", "3000"))
 
 
-def load_agent_prompt() -> str:
-    path = Path(AGENT_MD_PATH)
-    if not path.exists():
-        raise FileNotFoundError(f"AGENT.md not found at {AGENT_MD_PATH}")
-    content = path.read_text()
+def _build_template_context() -> dict[str, str]:
+    """Build template variable substitutions from the current time and environment.
 
-    # Substitute simple template variables
+    Returns a dict mapping variable name → value for all {{ VAR }} patterns.
+    Includes computed time variables plus every environment variable, so agent.yaml
+    secrets declared under `secrets` (which become env vars) are also substitutable.
+    """
     from zoneinfo import ZoneInfo
     tz_name = os.environ.get("TZ", "UTC")
     try:
@@ -74,18 +74,46 @@ def load_agent_prompt() -> str:
     today = datetime.now(tz)
     offset_secs = today.utcoffset().total_seconds()
     offset_hours = int(offset_secs // 3600)
-    tz_offset = f"{offset_hours:+03d}:00"  # e.g. "-06:00" (MDT) or "-07:00" (MST)
+    ctx: dict[str, str] = {
+        "TODAY": today.strftime("%A, %B %-d, %Y"),
+        "DATE": today.strftime("%Y-%m-%d"),
+        "TIME": today.strftime("%-I:%M %p %Z"),
+        "TZ_OFFSET": f"{offset_hours:+03d}:00",
+    }
+    # Overlay all env vars so {{ BRIEFING_EMAIL }} and any other injected secret
+    # variables are substituted in both AGENT.md and skill files.
+    ctx.update(os.environ)
+    return ctx
 
-    content = content.replace("{{ TODAY }}", today.strftime("%A, %B %-d, %Y"))
-    content = content.replace("{{ DATE }}", today.strftime("%Y-%m-%d"))
-    content = content.replace("{{ TIME }}", today.strftime("%-I:%M %p %Z"))
-    content = content.replace("{{ TZ_OFFSET }}", tz_offset)
 
-    briefing_email = os.environ.get("BRIEFING_EMAIL", "")
-    if briefing_email:
-        content = content.replace("{{ BRIEFING_EMAIL }}", briefing_email)
-
+def _apply_template_vars(content: str, ctx: dict[str, str]) -> str:
+    for key, val in ctx.items():
+        content = content.replace(f"{{{{ {key} }}}}", val)
     return content
+
+
+def load_agent_prompt(ctx: dict[str, str]) -> str:
+    path = Path(AGENT_MD_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"AGENT.md not found at {AGENT_MD_PATH}")
+    return _apply_template_vars(path.read_text(), ctx)
+
+
+def load_skill_prompts(ctx: dict[str, str]) -> list[str]:
+    """Load all skill_*.md files from the config directory, sorted alphabetically.
+
+    Skills are embedded in the ConfigMap by deploy_agent.py as skill_<name>.md keys.
+    Each is injected as a separate system prompt block before AGENT.md so it can be
+    cached independently by the Anthropic prompt cache.
+    """
+    config_dir = Path(AGENT_MD_PATH).parent
+    skill_files = sorted(config_dir.glob("skill_*.md"))
+    skills = []
+    for path in skill_files:
+        content = _apply_template_vars(path.read_text(), ctx)
+        log.info("Loaded skill: %s (%d chars)", path.name, len(content))
+        skills.append(content)
+    return skills
 
 
 def load_mcp_config() -> dict:
@@ -170,10 +198,15 @@ def compact_messages(messages: list, keep_recent: int = 2) -> list:
 
 
 async def run_agent() -> None:
-    prompt = load_agent_prompt()
+    ctx = _build_template_context()
+    prompt = load_agent_prompt(ctx)
+    skill_prompts = load_skill_prompts(ctx)
     mcp_config = load_mcp_config()
 
-    log.info("Starting agent run | model=%s max_turns=%d turn_delay=%ss", MODEL, MAX_TURNS, TURN_DELAY)
+    log.info(
+        "Starting agent run | model=%s max_turns=%d turn_delay=%ss skills=%d",
+        MODEL, MAX_TURNS, TURN_DELAY, len(skill_prompts),
+    )
     log.info("Prompt length: %d characters", len(prompt))
 
     mcp_tools, tool_server_map = await discover_mcp_tools(mcp_config)
@@ -189,8 +222,15 @@ async def run_agent() -> None:
         tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
 
     client = anthropic.Anthropic()
-    # System prompt is static across all turns — ideal for caching.
-    system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
+    # Build the system prompt as a list of blocks: one per skill (stable, shared
+    # content cached independently) followed by the agent-specific AGENT.md.
+    # Each block gets its own cache_control marker so Anthropic can cache at every
+    # skill boundary, keeping per-turn input token costs low.
+    system = [
+        {"type": "text", "text": skill_text, "cache_control": {"type": "ephemeral"}}
+        for skill_text in skill_prompts
+    ]
+    system.append({"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}})
     messages: list[dict[str, Any]] = [{"role": "user", "content": "Begin."}]
 
     # Tools that may only be called once per run (e.g. sending the briefing email).

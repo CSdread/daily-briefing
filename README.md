@@ -23,10 +23,13 @@ agents/
 │   └── gcal/                   # Google Calendar MCP server (Python/FastAPI)
 ├── scripts/
 │   └── deploy_agent.py         # Generates and applies k8s manifests from agent.yaml
+├── skills/                     # Reusable prompt skills (see Skills section below)
+│   ├── daily-briefing-email.md # HTML email template, section layout, and style guide
+│   └── agent-builder.md        # Reference for building new agents in this system
 ├── prompts/                    # One directory per agent
 │   └── daily-briefing/
-│       ├── AGENT.md            # Claude system prompt
-│       └── agent.yaml          # All agent config (model, schedule, MCPs, secrets, resources)
+│       ├── AGENT.md            # Claude system prompt (agent-specific instructions)
+│       └── agent.yaml          # All agent config (model, schedule, MCPs, secrets, skills)
 └── pyproject.toml              # Python dependencies for scripts (managed via uv)
 ```
 
@@ -94,6 +97,35 @@ The agent reads memory before processing each source and writes updates after th
 
 See `prompts/daily-briefing/AGENT.md` for the full memory schema and per-source instructions.
 
+## Skills
+
+Skills are reusable markdown files in `skills/` that get injected into the Anthropic API call as **separate system prompt blocks** before `AGENT.md`. Each block has its own `cache_control: ephemeral` marker, so stable skill content is cached independently from the agent-specific prompt — reducing per-turn input token costs.
+
+### How skills work
+
+1. List skills by name in `agent.yaml`:
+   ```yaml
+   skills:
+     - daily-briefing-email
+   ```
+2. The deploy script reads `skills/daily-briefing-email.md` and embeds it in the ConfigMap as `skill_daily-briefing-email.md`.
+3. At runtime the runner globs `skill_*.md` from the config directory and prepends each as its own system block before `AGENT.md`. Template variables (`{{ TODAY }}`, `{{ BRIEFING_EMAIL }}`, etc.) are substituted in skill files just as they are in `AGENT.md`.
+
+### Available skills
+
+| Skill | File | Purpose |
+|-------|------|---------|
+| `daily-briefing-email` | `skills/daily-briefing-email.md` | HTML email template, section layout, and style guide for daily briefing emails |
+| `agent-builder` | `skills/agent-builder.md` | Full reference for building new agents in this system — use this when asking Claude to scaffold a new agent |
+
+### When to create a skill
+
+- The instructions apply to more than one agent (e.g., a shared email format or response style)
+- The content is stable and benefits from independent caching
+- You want to separate *how to present output* from *what data to gather*
+
+To add a new skill: create `skills/<name>.md` and reference it in `agent.yaml` under `skills`.
+
 ## Adding a New Agent
 
 1. Create `prompts/<name>/AGENT.md` with the Claude system prompt
@@ -103,13 +135,15 @@ See `prompts/daily-briefing/AGENT.md` for the full memory schema and per-source 
    cron:
      schedule: "0 9 * * 1-5"
    ```
-   Add `mcpServers`, `secrets`, `memory`, and tuning fields as needed. See `docs/agent-config.md` for the full schema.
+   Add `mcpServers`, `secrets`, `memory`, `skills`, and tuning fields as needed. See `docs/agent-config.md` for the full schema.
 3. Deploy:
    ```bash
    make deploy-agent AGENT=my-agent
    ```
 
 That's it. The generator produces the ConfigMap, CronJob, manual Job, and storage resources automatically. See `docs/secrets.md` for creating any secrets referenced in `agent.yaml`.
+
+To get Claude's help scaffolding a new agent, load the `agent-builder` skill into your context — it contains the full schema, available MCP servers, and examples.
 
 ## Local Development
 
