@@ -224,11 +224,16 @@ def build_configmap(config: dict, prompt: str, skills: dict[str, str] | None = N
     }
 
 
-def build_pod_spec(config: dict) -> dict:
+def build_pod_spec(config: dict, trigger_env: list[dict] | None = None) -> dict:
     name = config["name"]
     runner = config["runner"]
     resources = config["resources"]
     tag = runner_image_tag()
+
+    # Read timezone from trigger.runtime (canonical path); fall back to legacy cron block.
+    timezone = config.get("trigger", {}).get("runtime", {}).get(
+        "timezone", config.get("cron", {}).get("timezone", "UTC")
+    )
 
     env = [
         {
@@ -242,8 +247,11 @@ def build_pod_spec(config: dict) -> dict:
         {"name": "MAX_TURNS", "value": str(runner["maxTurns"])},
         {"name": "TURN_DELAY", "value": str(runner["turnDelay"])},
         {"name": "TOOL_RESULT_MAX_CHARS", "value": str(runner["toolResultMaxChars"])},
-        {"name": "TZ", "value": config["cron"].get("timezone", "UTC")},
+        {"name": "TZ", "value": timezone},
     ]
+
+    if trigger_env:
+        env.extend(trigger_env)
 
     for secret in config["secrets"]:
         env.append({
@@ -296,8 +304,16 @@ def build_pod_spec(config: dict) -> dict:
 
 def build_cronjob(config: dict) -> dict:
     name = config["name"]
-    cron = config["cron"]
+    trigger = config["trigger"]
+    runtime = trigger["runtime"]
+    cron = trigger["cron"]
     pod_spec = build_pod_spec(config)
+
+    platform_labels = {
+        "agent": name,
+        "trigger-kind": "cron",
+        "managed-by": "agent-platform",
+    }
 
     return {
         "apiVersion": "batch/v1",
@@ -305,34 +321,43 @@ def build_cronjob(config: dict) -> dict:
         "metadata": {
             "name": name,
             "namespace": NAMESPACE,
-            "labels": {"app": name, "type": "agent"},
+            "labels": {"app": name, "type": "agent", **platform_labels},
         },
         "spec": {
             "schedule": cron["schedule"],
-            "timeZone": cron["timezone"],
+            "timeZone": runtime["timezone"],
             "concurrencyPolicy": cron["concurrencyPolicy"],
             "successfulJobsHistoryLimit": cron["successfulJobsHistoryLimit"],
             "failedJobsHistoryLimit": cron["failedJobsHistoryLimit"],
             "jobTemplate": {
+                "metadata": {
+                    "labels": {"app": name, "type": "agent-job", **platform_labels},
+                },
                 "spec": {
-                    "activeDeadlineSeconds": cron["activeDeadlineSeconds"],
-                    "backoffLimit": cron["backoffLimit"],
+                    "activeDeadlineSeconds": runtime["activeDeadlineSeconds"],
+                    "backoffLimit": runtime["backoffLimit"],
                     "template": {
                         "metadata": {
-                            "labels": {"app": name, "type": "agent-job"},
+                            "labels": {"app": name, "type": "agent-job", **platform_labels},
                         },
                         "spec": pod_spec,
                     },
-                }
+                },
             },
         },
     }
 
 
-def build_manual_job(config: dict) -> dict:
+def build_manual_job(config: dict, trigger_kind: str = "cron") -> dict:
     name = config["name"]
-    cron = config["cron"]
+    runtime = config["trigger"]["runtime"]
     pod_spec = build_pod_spec(config)
+
+    platform_labels = {
+        "agent": name,
+        "trigger-kind": trigger_kind,
+        "managed-by": "agent-platform",
+    }
 
     return {
         "apiVersion": "batch/v1",
@@ -340,14 +365,14 @@ def build_manual_job(config: dict) -> dict:
         "metadata": {
             "name": f"{name}-manual",
             "namespace": NAMESPACE,
-            "labels": {"app": name, "type": "agent-job"},
+            "labels": {"app": name, "type": "agent-job", **platform_labels},
         },
         "spec": {
-            "activeDeadlineSeconds": cron["activeDeadlineSeconds"],
-            "backoffLimit": cron["backoffLimit"],
+            "activeDeadlineSeconds": runtime["activeDeadlineSeconds"],
+            "backoffLimit": runtime["backoffLimit"],
             "template": {
                 "metadata": {
-                    "labels": {"app": name, "type": "agent-job"},
+                    "labels": {"app": name, "type": "agent-job", **platform_labels},
                 },
                 "spec": pod_spec,
             },
@@ -397,12 +422,102 @@ def build_storage(config: dict) -> list[dict]:
     return [pv, pvc]
 
 
-def render_manifests(config: dict, prompt: str, skills: dict[str, str] | None = None, include_storage: bool = True) -> str:
-    docs = [build_configmap(config, prompt, skills)]
+def render_cron(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: cron. Returns ConfigMap + CronJob + manual Job."""
+    return [
+        build_configmap(config, prompt, skills),
+        build_cronjob(config),
+        build_manual_job(config, trigger_kind="cron"),
+    ]
 
-    if config["type"] == "cron":
-        docs.append(build_cronjob(config))
-        docs.append(build_manual_job(config))
+
+# Phase D-6 / E-6 must modify ONLY this stub. Do not touch render_cron, render_manual,
+# or render_manifests dispatcher from those tasks.
+# STUB — phase D fills this in. Do not modify this file's render_cron, render_manual,
+# or render_manifests dispatcher from those tasks.
+def render_https(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: https (STUB — Phase D fills this in).
+
+    Returns ConfigMap plus a commented-out placeholder marker. Does not fail.
+    """
+    configmap = build_configmap(config, prompt, skills)
+    placeholder = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": f"{config['name']}-https-stub",
+            "namespace": NAMESPACE,
+            "annotations": {
+                "agent-platform/stub": "true",
+                "agent-platform/phase": "D",
+            },
+        },
+        "data": {
+            "README": (
+                "# STUB — phase D fills this in.\n"
+                "Do not modify render_cron, render_manual, or render_manifests dispatcher.\n"
+            ),
+        },
+    }
+    return [configmap, placeholder]
+
+
+# Phase D-6 / E-6 must modify ONLY this stub. Do not touch render_cron, render_manual,
+# or render_manifests dispatcher from those tasks.
+# STUB — phase E fills this in. Do not modify this file's render_cron, render_manual,
+# or render_manifests dispatcher from those tasks.
+def render_queue(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: queue (STUB — Phase E fills this in).
+
+    Returns ConfigMap plus a commented-out placeholder marker. Does not fail.
+    """
+    configmap = build_configmap(config, prompt, skills)
+    placeholder = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": f"{config['name']}-queue-stub",
+            "namespace": NAMESPACE,
+            "annotations": {
+                "agent-platform/stub": "true",
+                "agent-platform/phase": "E",
+            },
+        },
+        "data": {
+            "README": (
+                "# STUB — phase E fills this in.\n"
+                "Do not modify render_cron, render_manual, or render_manifests dispatcher.\n"
+            ),
+        },
+    }
+    return [configmap, placeholder]
+
+
+def render_manual(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: manual. Returns only the ConfigMap.
+
+    Jobs for manual-only agents are created on-demand by the control-plane.
+    """
+    return [build_configmap(config, prompt, skills)]
+
+
+def render_manifests(config: dict, prompt: str, skills: dict[str, str] | None = None, include_storage: bool = True) -> str:
+    """Dispatch to the appropriate render_* function based on trigger.kind."""
+    kind = config["trigger"]["kind"]
+
+    _dispatch = {
+        "cron": render_cron,
+        "https": render_https,
+        "queue": render_queue,
+        "manual": render_manual,
+    }
+
+    render_fn = _dispatch.get(kind)
+    if render_fn is None:
+        print(f"ERROR: unknown trigger.kind '{kind}'", file=sys.stderr)
+        sys.exit(1)
+
+    docs = render_fn(config, prompt, skills)
 
     if include_storage and config["memory"]["enabled"]:
         mem = config["memory"]
@@ -410,7 +525,7 @@ def render_manifests(config: dict, prompt: str, skills: dict[str, str] | None = 
             print("ERROR: memory.nfsServer and memory.nfsPath are required when memory.enabled: true",
                   file=sys.stderr)
             sys.exit(1)
-        docs.extend(build_storage(config))
+        docs = list(docs) + build_storage(config)
 
     return "---\n" + "\n---\n".join(
         yaml.dump(doc, default_flow_style=False, sort_keys=False) for doc in docs
@@ -470,7 +585,7 @@ def main() -> None:
         # Delete the manual Job before applying — its pod template spec is immutable,
         # so kubectl apply fails if the image tag changed. --run handles this already;
         # mirror that behaviour here.
-        if config["type"] == "cron":
+        if config["trigger"]["kind"] == "cron":
             job_name = f"{config['name']}-manual"
             subprocess.run(
                 ["kubectl", "delete", "job", job_name, "-n", NAMESPACE, "--ignore-not-found"],
