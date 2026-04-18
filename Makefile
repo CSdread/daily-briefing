@@ -152,15 +152,23 @@ restart-mcps: restart-gmail restart-gcal restart-mac-bridge
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
-.PHONY: test check-manifest-parity
+.PHONY: test unit-test check-manifest-parity regen-golden
 
-# Run all tests (currently: manifest-parity + unit tests)
-test: check-manifest-parity
+# Run all tests: full pytest suite + golden-manifest parity check.
+test: unit-test check-manifest-parity
+
+# Run the full unit-test suite.
+unit-test:
+	uv run pytest scripts/test_deploy_agent.py -q
 
 # Verify daily-briefing manifests match the golden fixture.
 # Exits non-zero if the rendered output differs from tests/fixtures/golden/daily-briefing.yaml.
 check-manifest-parity:
 	uv run pytest scripts/test_deploy_agent.py::test_golden_daily_briefing -q
+
+# Regenerate the golden fixture from the current deploy_agent.py output.
+regen-golden:
+	uv run python scripts/deploy_agent.py daily-briefing > tests/fixtures/golden/daily-briefing.yaml
 
 # ─── Help ─────────────────────────────────────────────────────────────────────
 
