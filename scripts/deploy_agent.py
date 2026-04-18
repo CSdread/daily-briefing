@@ -105,6 +105,9 @@ def load_config(agent_name: str) -> tuple[dict, str]:
     # Keep config["cron"] populated for any stale readers within this phase.
     if "trigger" not in config:
         raw_cron = config.get("cron", {})
+        if config.get("type") == "cron" and not raw_cron.get("schedule"):
+            print("ERROR: agent.yaml must specify cron.schedule for type: cron", file=sys.stderr)
+            sys.exit(1)
         has_cron_block = bool(raw_cron.get("schedule"))
         if has_cron_block:
             warnings.warn(

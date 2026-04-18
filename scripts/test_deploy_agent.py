@@ -83,6 +83,18 @@ def _make_config(raw: dict) -> dict:
 # Legacy shim tests
 # ---------------------------------------------------------------------------
 
+def test_legacy_shim_type_cron_without_schedule_errors(tmp_path, monkeypatch):
+    """type:cron with no cron.schedule → SystemExit with an error message."""
+    # Write a minimal agent dir under tmp_path
+    agent_dir = tmp_path / "prompts" / "no-sched-agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "agent.yaml").write_text("name: no-sched-agent\ntype: cron\n")
+    (agent_dir / "AGENT.md").write_text("# prompt\n")
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
+    with pytest.raises(SystemExit):
+        da.load_config("no-sched-agent")
+
+
 def test_legacy_shim_type_cron():
     """type:cron + top-level cron: block → canonical trigger block."""
     raw = {
