@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 try:
@@ -98,9 +99,71 @@ def load_config(agent_name: str) -> tuple[dict, str]:
 
     config = deep_merge(DEFAULTS, raw)
 
-    if config["type"] == "cron" and not config.get("cron", {}).get("schedule"):
-        print("ERROR: agent.yaml must specify cron.schedule for type: cron", file=sys.stderr)
-        sys.exit(1)
+    # ── Legacy shim ──────────────────────────────────────────────────────────
+    # Normalise old-style `type: cron` + root `cron:` block into the canonical
+    # `trigger:` block so all downstream code can read from trigger.* uniformly.
+    # Keep config["cron"] populated for any stale readers within this phase.
+    if "trigger" not in config:
+        raw_cron = config.get("cron", {})
+        has_cron_block = bool(raw_cron.get("schedule"))
+        if has_cron_block:
+            warnings.warn(
+                f"Agent '{config['name']}': top-level 'cron:' block is deprecated. "
+                "Use 'trigger: {{kind: cron, runtime: {{...}}, cron: {{...}}}}' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            config["trigger"] = {
+                "kind": "cron",
+                "runtime": {
+                    "timezone": raw_cron.get("timezone", "UTC"),
+                    "activeDeadlineSeconds": raw_cron.get("activeDeadlineSeconds", 1800),
+                    "backoffLimit": raw_cron.get("backoffLimit", 1),
+                },
+                "cron": {
+                    "schedule": raw_cron["schedule"],
+                    "concurrencyPolicy": raw_cron.get("concurrencyPolicy", "Forbid"),
+                    "successfulJobsHistoryLimit": raw_cron.get("successfulJobsHistoryLimit", 3),
+                    "failedJobsHistoryLimit": raw_cron.get("failedJobsHistoryLimit", 3),
+                },
+            }
+        else:
+            warnings.warn(
+                f"Agent '{config['name']}': no 'trigger' or 'cron' block found. "
+                "Defaulting to trigger.kind: manual.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            config["trigger"] = {"kind": "manual", "runtime": {}, "manual": {}}
+
+    # Ensure trigger.runtime always exists with defaults filled in.
+    trigger = config["trigger"]
+    trigger.setdefault("runtime", {})
+    trigger["runtime"].setdefault("timezone", "UTC")
+    trigger["runtime"].setdefault("activeDeadlineSeconds", 1800)
+    trigger["runtime"].setdefault("backoffLimit", 1)
+
+    # Validate cron schedule when kind is cron.
+    if trigger["kind"] == "cron":
+        if not config.get("cron", {}).get("schedule") and not trigger.get("cron", {}).get("schedule"):
+            print("ERROR: agent.yaml must specify cron.schedule for trigger.kind: cron", file=sys.stderr)
+            sys.exit(1)
+        # Ensure trigger.cron sub-block exists with defaults.
+        trigger.setdefault("cron", {})
+        raw_cron = config.get("cron", {})
+        trigger["cron"].setdefault("schedule", raw_cron.get("schedule", ""))
+        trigger["cron"].setdefault("concurrencyPolicy", raw_cron.get("concurrencyPolicy", "Forbid"))
+        trigger["cron"].setdefault("successfulJobsHistoryLimit", raw_cron.get("successfulJobsHistoryLimit", 3))
+        trigger["cron"].setdefault("failedJobsHistoryLimit", raw_cron.get("failedJobsHistoryLimit", 3))
+        # Keep config["cron"] in sync for stale readers within this phase.
+        config["cron"]["timezone"] = trigger["runtime"]["timezone"]
+        config["cron"]["activeDeadlineSeconds"] = trigger["runtime"]["activeDeadlineSeconds"]
+        config["cron"]["backoffLimit"] = trigger["runtime"]["backoffLimit"]
+        config["cron"]["schedule"] = trigger["cron"]["schedule"]
+        config["cron"]["concurrencyPolicy"] = trigger["cron"]["concurrencyPolicy"]
+        config["cron"]["successfulJobsHistoryLimit"] = trigger["cron"]["successfulJobsHistoryLimit"]
+        config["cron"]["failedJobsHistoryLimit"] = trigger["cron"]["failedJobsHistoryLimit"]
+    # ── End legacy shim ──────────────────────────────────────────────────────
 
     return config, md_path.read_text()
 
