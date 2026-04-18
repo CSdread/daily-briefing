@@ -150,6 +150,18 @@ restart-mac-bridge:
 
 restart-mcps: restart-gmail restart-gcal restart-mac-bridge
 
+# ─── Tests ────────────────────────────────────────────────────────────────────
+
+.PHONY: test check-manifest-parity
+
+# Run all tests (currently: manifest-parity + unit tests)
+test: check-manifest-parity
+
+# Verify daily-briefing manifests match the golden fixture.
+# Exits non-zero if the rendered output differs from tests/fixtures/golden/daily-briefing.yaml.
+check-manifest-parity:
+	uv run pytest scripts/test_deploy_agent.py::test_golden_daily_briefing -q
+
 # ─── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
