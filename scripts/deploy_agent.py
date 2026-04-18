@@ -49,8 +49,8 @@ DEFAULTS = {
         "concurrencyPolicy": "Forbid",
         "activeDeadlineSeconds": 1800,
         "backoffLimit": 1,
-        "successfulJobsHistoryLimit": 3,
-        "failedJobsHistoryLimit": 3,
+        "successfulJobsHistoryLimit": 50,
+        "failedJobsHistoryLimit": 50,
     },
     "resources": {
         "requests": {"cpu": "100m", "memory": "256Mi"},
@@ -126,8 +126,8 @@ def load_config(agent_name: str) -> tuple[dict, str]:
                 "cron": {
                     "schedule": raw_cron["schedule"],
                     "concurrencyPolicy": raw_cron.get("concurrencyPolicy", "Forbid"),
-                    "successfulJobsHistoryLimit": raw_cron.get("successfulJobsHistoryLimit", 3),
-                    "failedJobsHistoryLimit": raw_cron.get("failedJobsHistoryLimit", 3),
+                    "successfulJobsHistoryLimit": raw_cron.get("successfulJobsHistoryLimit", 50),
+                    "failedJobsHistoryLimit": raw_cron.get("failedJobsHistoryLimit", 50),
                 },
             }
         else:
@@ -156,8 +156,8 @@ def load_config(agent_name: str) -> tuple[dict, str]:
         raw_cron = config.get("cron", {})
         trigger["cron"].setdefault("schedule", raw_cron.get("schedule", ""))
         trigger["cron"].setdefault("concurrencyPolicy", raw_cron.get("concurrencyPolicy", "Forbid"))
-        trigger["cron"].setdefault("successfulJobsHistoryLimit", raw_cron.get("successfulJobsHistoryLimit", 3))
-        trigger["cron"].setdefault("failedJobsHistoryLimit", raw_cron.get("failedJobsHistoryLimit", 3))
+        trigger["cron"].setdefault("successfulJobsHistoryLimit", raw_cron.get("successfulJobsHistoryLimit", 50))
+        trigger["cron"].setdefault("failedJobsHistoryLimit", raw_cron.get("failedJobsHistoryLimit", 50))
         # Keep config["cron"] in sync for stale readers within this phase.
         config["cron"]["timezone"] = trigger["runtime"]["timezone"]
         config["cron"]["activeDeadlineSeconds"] = trigger["runtime"]["activeDeadlineSeconds"]

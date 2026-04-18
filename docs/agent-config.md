@@ -49,8 +49,8 @@ cron:
   concurrencyPolicy: Forbid        # Forbid | Allow | Replace
   activeDeadlineSeconds: 1800      # Hard pod timeout (30 min). Prevents runaway loops.
   backoffLimit: 1                  # Retry attempts on failure.
-  successfulJobsHistoryLimit: 3    # Completed job pods to keep.
-  failedJobsHistoryLimit: 3        # Failed job pods to keep.
+  successfulJobsHistoryLimit: 50   # Completed job pods to keep.
+  failedJobsHistoryLimit: 50       # Failed job pods to keep.
 
 # ── Kubernetes resource limits ───────────────────────────────────────────────
 resources:
@@ -121,8 +121,8 @@ secrets: []
 | `cron.concurrencyPolicy` | No | `Forbid` | What to do if a job is still running when the next one fires |
 | `cron.activeDeadlineSeconds` | No | `1800` | Hard pod kill timeout; prevents infinite loops from consuming resources |
 | `cron.backoffLimit` | No | `1` | Pod retry count on failure |
-| `cron.successfulJobsHistoryLimit` | No | `3` | Completed pods to retain for inspection |
-| `cron.failedJobsHistoryLimit` | No | `3` | Failed pods to retain for inspection |
+| `cron.successfulJobsHistoryLimit` | No | `50` | Completed pods to retain for inspection |
+| `cron.failedJobsHistoryLimit` | No | `50` | Failed pods to retain for inspection |
 | `resources.requests.cpu` | No | `100m` | CPU request |
 | `resources.requests.memory` | No | `256Mi` | Memory request |
 | `resources.limits.cpu` | No | `500m` | CPU limit |
@@ -160,8 +160,8 @@ trigger:
   cron:
     schedule: "0 5 * * *"           # REQUIRED. Standard 5-field cron expression.
     concurrencyPolicy: Forbid        # Forbid | Allow | Replace
-    successfulJobsHistoryLimit: 3    # Completed job pods to keep.
-    failedJobsHistoryLimit: 3        # Failed job pods to keep.
+    successfulJobsHistoryLimit: 50   # Completed job pods to keep.
+    failedJobsHistoryLimit: 50       # Failed job pods to keep.
 
   # ── https: HTTP-triggered agent (async-polling) ───────────────────────────
   # Phase D fills this in. Stub section only.
@@ -226,8 +226,8 @@ trigger:
 |-------|----------|---------|-------------|
 | `trigger.cron.schedule` | Yes (cron) | — | Standard 5-field cron expression |
 | `trigger.cron.concurrencyPolicy` | No | `Forbid` | `Forbid` \| `Allow` \| `Replace` |
-| `trigger.cron.successfulJobsHistoryLimit` | No | `3` | Completed pods to retain |
-| `trigger.cron.failedJobsHistoryLimit` | No | `3` | Failed pods to retain |
+| `trigger.cron.successfulJobsHistoryLimit` | No | `50` | Completed pods to retain |
+| `trigger.cron.failedJobsHistoryLimit` | No | `50` | Failed pods to retain |
 
 ### trigger.https fields (Phase D — stub)
 

@@ -303,8 +303,8 @@ spec:
   schedule: 0 5 * * *
   timeZone: America/Denver
   concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 50
+  failedJobsHistoryLimit: 50
   jobTemplate:
     metadata:
       labels:
