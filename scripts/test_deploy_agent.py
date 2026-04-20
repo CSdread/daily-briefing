@@ -85,6 +85,39 @@ def test_agent_name_length_validation(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Schedule validation tests
+# ---------------------------------------------------------------------------
+
+def test_empty_schedule_errors(tmp_path, monkeypatch):
+    """trigger.kind: cron with empty schedule string → SystemExit."""
+    _write_agent(tmp_path, (
+        "name: empty-sched-agent\n"
+        "trigger:\n"
+        "  kind: cron\n"
+        "  cron:\n"
+        "    schedule: \"\"\n"
+    ))
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
+    with pytest.raises(SystemExit):
+        da.load_config("empty-sched-agent")
+
+
+def test_unknown_trigger_kind_errors(tmp_path, monkeypatch):
+    """trigger.kind: <unknown> → SystemExit when render_manifests is called."""
+    _write_agent(tmp_path, (
+        "name: quantum-agent\n"
+        "trigger:\n"
+        "  kind: quantum\n"
+    ))
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        config, prompt = da.load_config("quantum-agent")
+    with pytest.raises(SystemExit):
+        da.render_manifests(config, prompt)
+
+
+# ---------------------------------------------------------------------------
 # Legacy shim tests
 # ---------------------------------------------------------------------------
 

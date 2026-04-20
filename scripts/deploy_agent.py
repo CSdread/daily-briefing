@@ -120,7 +120,10 @@ def load_config(agent_name: str) -> tuple[dict, str]:
     # Keep config["cron"] populated for any stale readers within this phase.
     if "trigger" not in config:
         raw_cron = config.get("cron", {})
-        if config.get("type") == "cron" and not raw_cron.get("schedule"):
+        legacy_schedule = raw_cron.get("schedule")
+        if config.get("type") == "cron" and (
+            not isinstance(legacy_schedule, str) or not legacy_schedule.strip()
+        ):
             print("ERROR: agent.yaml must specify cron.schedule for type: cron", file=sys.stderr)
             sys.exit(1)
         has_cron_block = bool(raw_cron.get("schedule"))
@@ -163,8 +166,12 @@ def load_config(agent_name: str) -> tuple[dict, str]:
 
     # Validate cron schedule when kind is cron.
     if trigger["kind"] == "cron":
-        if not config.get("cron", {}).get("schedule") and not trigger.get("cron", {}).get("schedule"):
-            print("ERROR: agent.yaml must specify cron.schedule for trigger.kind: cron", file=sys.stderr)
+        schedule = trigger.get("cron", {}).get("schedule") or config.get("cron", {}).get("schedule")
+        if not isinstance(schedule, str) or not schedule.strip():
+            print(
+                "ERROR: agent.yaml trigger.cron.schedule must be a non-empty cron expression",
+                file=sys.stderr,
+            )
             sys.exit(1)
         # Ensure trigger.cron sub-block exists with defaults.
         trigger.setdefault("cron", {})
@@ -587,13 +594,6 @@ def main() -> None:
     mode.add_argument("--config-only", action="store_true", help="Apply ConfigMap only")
     mode.add_argument("--run", action="store_true", help="Delete + apply manual Job")
     args = parser.parse_args()
-    if len(args.agent) > 42:
-        print(
-            f"ERROR: agent name '{args.agent}' exceeds 42 characters "
-            "(max derivable Job name: <agent>-idm-<16hex> must be ≤ 63 chars)",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
     config, prompt = load_config(args.agent)
     skills = load_skills(config)
