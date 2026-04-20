@@ -36,7 +36,6 @@ RUNNER_IMAGE = "csdread/agent-runner"
 
 # Defaults for all optional fields
 DEFAULTS = {
-    "type": "cron",
     "model": "claude-opus-4-6",
     "runner": {
         "maxTokens": 8192,
