@@ -230,7 +230,24 @@ def load_skills(config: dict) -> dict[str, str]:
     return result
 
 
-def build_configmap(config: dict, prompt: str, skills: dict[str, str] | None = None) -> dict:
+def build_configmap(
+    config: dict,
+    prompt: str,
+    skills: dict[str, str] | None = None,
+    extra_data: dict[str, str] | None = None,
+) -> dict:
+    """Build the agent ConfigMap manifest.
+
+    Args:
+        config:     Merged agent configuration dict.
+        prompt:     Contents of AGENT.md.
+        skills:     Optional mapping of skill_name → markdown text; each entry is
+                    stored as ``skill_<name>.md`` in the ConfigMap.
+        extra_data: Optional additional key→value pairs merged into ``data`` after
+                    skills are applied.  Intended for Phase D/E to attach per-trigger
+                    config (e.g. ``trigger.json``) without modifying this function's
+                    signature again.
+    """
     name = config["name"]
     mcp_json = mcp_servers_to_json(config["mcpServers"])
     data: dict[str, str] = {"AGENT.md": prompt, "mcp.json": mcp_json}
@@ -238,6 +255,8 @@ def build_configmap(config: dict, prompt: str, skills: dict[str, str] | None = N
     # and injects them as separate system prompt blocks before AGENT.md.
     for skill_name, skill_content in (skills or {}).items():
         data[f"skill_{skill_name}.md"] = skill_content
+    if extra_data:
+        data.update(extra_data)
     return {
         "apiVersion": "v1",
         "kind": "ConfigMap",

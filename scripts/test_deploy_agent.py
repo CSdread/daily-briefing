@@ -310,6 +310,42 @@ def test_labels_stamped():
             f"CronJob jobTemplate missing label {k}={v}; got {job_template_labels}"
         )
 
+    # CronJob pod template (jobTemplate.spec.template) should also carry the labels.
+    cronjob_pod_labels = (
+        cronjob["spec"]["jobTemplate"]["spec"]["template"]["metadata"].get("labels", {})
+    )
+    for k, v in required_labels.items():
+        assert cronjob_pod_labels.get(k) == v, (
+            f"CronJob pod template missing label {k}={v}; got {cronjob_pod_labels}"
+        )
+
+    # Manual Job pod template should carry the labels.
+    manual_job = next(d for d in docs if d["kind"] == "Job")
+    manual_job_pod_labels = (
+        manual_job["spec"]["template"]["metadata"].get("labels", {})
+    )
+    for k, v in required_labels.items():
+        assert manual_job_pod_labels.get(k) == v, (
+            f"Manual Job pod template missing label {k}={v}; got {manual_job_pod_labels}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# build_configmap extension point tests
+# ---------------------------------------------------------------------------
+
+def test_build_configmap_extra_data_merges():
+    """extra_data kwarg is merged into the ConfigMap data dict."""
+    config = _make_config({"name": "extra-data-agent"})
+    cm = da.build_configmap(config, MINIMAL_PROMPT, extra_data={"trigger.json": "{}"})
+    assert "trigger.json" in cm["data"], (
+        "ConfigMap data should contain the extra_data key 'trigger.json'"
+    )
+    assert cm["data"]["trigger.json"] == "{}"
+    # Standard keys must still be present.
+    assert "AGENT.md" in cm["data"]
+    assert "mcp.json" in cm["data"]
+
 
 # ---------------------------------------------------------------------------
 # Golden-manifest parity test
