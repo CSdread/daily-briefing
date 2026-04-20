@@ -27,55 +27,47 @@ import deploy_agent as da
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _write_agent(tmp_path: Path, agent_yaml: str, prompt: str = "# prompt\n") -> Path:
+    """Write prompts/<name>/agent.yaml + AGENT.md under tmp_path and return tmp_path.
+
+    The agent name is extracted from the agent_yaml content.  Callers should
+    monkeypatch da.REPO_ROOT to tmp_path so load_config() reads from there.
+    """
+    import yaml as _yaml
+    raw = _yaml.safe_load(agent_yaml)
+    name = raw["name"]
+    agent_dir = tmp_path / "prompts" / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "agent.yaml").write_text(agent_yaml)
+    (agent_dir / "AGENT.md").write_text(prompt)
+    return tmp_path
+
+
 def _make_config(raw: dict) -> dict:
-    """Merge raw dict with DEFAULTS and run the legacy shim."""
-    # Patch REPO_ROOT so load_config() can find files; for shim-only tests we
-    # call the shim logic directly instead of going through load_config().
-    config = da.deep_merge(da.DEFAULTS, raw)
+    """Build a fully-shimmed config by writing a temp agent and calling load_config.
 
-    # Run the same shim logic that load_config() runs (extracted for testability).
-    if "trigger" not in config:
-        raw_cron = config.get("cron", {})
-        has_cron_block = bool(raw_cron.get("schedule"))
-        if has_cron_block:
-            config["trigger"] = {
-                "kind": "cron",
-                "runtime": {
-                    "timezone": raw_cron.get("timezone", "UTC"),
-                    "activeDeadlineSeconds": raw_cron.get("activeDeadlineSeconds", 1800),
-                    "backoffLimit": raw_cron.get("backoffLimit", 1),
-                },
-                "cron": {
-                    "schedule": raw_cron["schedule"],
-                    "concurrencyPolicy": raw_cron.get("concurrencyPolicy", "Forbid"),
-                    "successfulJobsHistoryLimit": raw_cron.get("successfulJobsHistoryLimit", 3),
-                    "failedJobsHistoryLimit": raw_cron.get("failedJobsHistoryLimit", 3),
-                },
-            }
-        else:
-            config["trigger"] = {"kind": "manual", "runtime": {}, "manual": {}}
-
-    trigger = config["trigger"]
-    trigger.setdefault("runtime", {})
-    trigger["runtime"].setdefault("timezone", "UTC")
-    trigger["runtime"].setdefault("activeDeadlineSeconds", 1800)
-    trigger["runtime"].setdefault("backoffLimit", 1)
-
-    if trigger["kind"] == "cron":
-        trigger.setdefault("cron", {})
-        raw_cron = config.get("cron", {})
-        trigger["cron"].setdefault("schedule", raw_cron.get("schedule", ""))
-        trigger["cron"].setdefault("concurrencyPolicy", raw_cron.get("concurrencyPolicy", "Forbid"))
-        trigger["cron"].setdefault("successfulJobsHistoryLimit", raw_cron.get("successfulJobsHistoryLimit", 3))
-        trigger["cron"].setdefault("failedJobsHistoryLimit", raw_cron.get("failedJobsHistoryLimit", 3))
-        config["cron"]["timezone"] = trigger["runtime"]["timezone"]
-        config["cron"]["activeDeadlineSeconds"] = trigger["runtime"]["activeDeadlineSeconds"]
-        config["cron"]["backoffLimit"] = trigger["runtime"]["backoffLimit"]
-        config["cron"]["schedule"] = trigger["cron"]["schedule"]
-        config["cron"]["concurrencyPolicy"] = trigger["cron"]["concurrencyPolicy"]
-        config["cron"]["successfulJobsHistoryLimit"] = trigger["cron"]["successfulJobsHistoryLimit"]
-        config["cron"]["failedJobsHistoryLimit"] = trigger["cron"]["failedJobsHistoryLimit"]
-
+    Writes only the caller-supplied fields (not DEFAULTS) to agent.yaml so that
+    load_config applies DEFAULTS internally — exactly as production does.
+    This helper creates a throwaway tmp directory so tests that don't have
+    tmp_path as a fixture parameter can still get a valid config dict.
+    """
+    import tempfile, yaml as _yaml, warnings as _w
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        name = raw.get("name", "test-agent")
+        agent_dir = tmp / "prompts" / name
+        agent_dir.mkdir(parents=True)
+        # Write only the raw dict — load_config merges DEFAULTS itself.
+        (agent_dir / "agent.yaml").write_text(_yaml.dump(raw))
+        (agent_dir / "AGENT.md").write_text("# prompt\n")
+        original = da.REPO_ROOT
+        da.REPO_ROOT = tmp
+        try:
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                config, _ = da.load_config(name)
+        finally:
+            da.REPO_ROOT = original
     return config
 
 
@@ -85,29 +77,27 @@ def _make_config(raw: dict) -> dict:
 
 def test_legacy_shim_type_cron_without_schedule_errors(tmp_path, monkeypatch):
     """type:cron with no cron.schedule → SystemExit with an error message."""
-    # Write a minimal agent dir under tmp_path
-    agent_dir = tmp_path / "prompts" / "no-sched-agent"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "agent.yaml").write_text("name: no-sched-agent\ntype: cron\n")
-    (agent_dir / "AGENT.md").write_text("# prompt\n")
+    _write_agent(tmp_path, "name: no-sched-agent\ntype: cron\n")
     monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
     with pytest.raises(SystemExit):
         da.load_config("no-sched-agent")
 
 
-def test_legacy_shim_type_cron():
+def test_legacy_shim_type_cron(tmp_path, monkeypatch):
     """type:cron + top-level cron: block → canonical trigger block."""
-    raw = {
-        "name": "test-agent",
-        "type": "cron",
-        "cron": {
-            "schedule": "0 5 * * *",
-            "timezone": "America/Denver",
-            "activeDeadlineSeconds": 900,
-            "backoffLimit": 2,
-        },
-    }
-    config = _make_config(raw)
+    _write_agent(tmp_path, (
+        "name: test-agent\n"
+        "type: cron\n"
+        "cron:\n"
+        "  schedule: '0 5 * * *'\n"
+        "  timezone: America/Denver\n"
+        "  activeDeadlineSeconds: 900\n"
+        "  backoffLimit: 2\n"
+    ))
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        config, _ = da.load_config("test-agent")
 
     assert config["trigger"]["kind"] == "cron"
     assert config["trigger"]["runtime"]["timezone"] == "America/Denver"
@@ -116,52 +106,51 @@ def test_legacy_shim_type_cron():
     assert config["trigger"]["cron"]["schedule"] == "0 5 * * *"
 
 
-def test_legacy_shim_absent_type():
+def test_legacy_shim_absent_type(tmp_path, monkeypatch):
     """No type: field but top-level cron: present → trigger.kind == cron."""
-    raw = {
-        "name": "test-agent",
-        "cron": {
-            "schedule": "30 8 * * 1-5",
-            "timezone": "UTC",
-        },
-    }
-    config = _make_config(raw)
+    _write_agent(tmp_path, (
+        "name: test-agent\n"
+        "cron:\n"
+        "  schedule: '30 8 * * 1-5'\n"
+        "  timezone: UTC\n"
+    ))
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        config, _ = da.load_config("test-agent")
 
     assert config["trigger"]["kind"] == "cron"
     assert config["trigger"]["cron"]["schedule"] == "30 8 * * 1-5"
 
 
-def test_legacy_shim_absent_everything():
+def test_legacy_shim_absent_everything(tmp_path, monkeypatch):
     """Bare config with only name: → trigger.kind == manual."""
-    raw = {"name": "test-manual-agent"}
-    # Override the DEFAULTS cron schedule that deep_merge would inject — the
-    # DEFAULTS cron block has no schedule, so it stays empty.
-    # We need to ensure no schedule comes in via DEFAULTS.
-    base = da.deep_merge(da.DEFAULTS, raw)
-    # DEFAULTS["cron"] has no "schedule" key, so has_cron_block will be False.
-    assert not base.get("cron", {}).get("schedule"), (
+    # Verify DEFAULTS has no cron.schedule (sanity check).
+    assert not da.DEFAULTS.get("cron", {}).get("schedule"), (
         "DEFAULTS should not have a cron.schedule — check DEFAULTS dict"
     )
-    config = _make_config(raw)
+    _write_agent(tmp_path, "name: test-manual-agent\n")
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        config, _ = da.load_config("test-manual-agent")
     assert config["trigger"]["kind"] == "manual"
 
 
-def test_legacy_shim_emits_deprecation_warning():
-    """Legacy cron: block triggers a DeprecationWarning via warnings.warn."""
-    raw = {
-        "name": "warn-agent",
-        "cron": {"schedule": "0 1 * * *"},
-    }
-    # Manually replicate the load_config warning path.
-    config = da.deep_merge(da.DEFAULTS, raw)
+def test_legacy_shim_emits_deprecation_warning(tmp_path, monkeypatch):
+    """Legacy cron: block triggers a DeprecationWarning via load_config."""
+    _write_agent(tmp_path, (
+        "name: warn-agent\n"
+        "cron:\n"
+        "  schedule: '0 1 * * *'\n"
+    ))
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        if "trigger" not in config:
-            raw_cron = config.get("cron", {})
-            if raw_cron.get("schedule"):
-                warnings.warn("deprecated", DeprecationWarning, stacklevel=2)
-        assert len(w) == 1
-        assert issubclass(w[0].category, DeprecationWarning)
+        da.load_config("warn-agent")
+    assert any(issubclass(warning.category, DeprecationWarning) for warning in w), (
+        "Expected a DeprecationWarning from load_config for legacy cron: block"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,28 +186,31 @@ def test_dispatch_manual_emits_configmap_only():
 
 
 def test_dispatch_https_stub_emits_configmap():
-    """render_https stub returns a ConfigMap (+ marker); does not raise."""
+    """render_https stub returns exactly 1 ConfigMap with AGENT.md and mcp.json; does not raise."""
     config = _make_config({"name": "https-agent"})
     config["trigger"] = {
         "kind": "https",
         "runtime": {"timezone": "UTC", "activeDeadlineSeconds": 1800, "backoffLimit": 1},
     }
     docs = da.render_https(config, MINIMAL_PROMPT)
-    # Must not raise; must include a ConfigMap.
-    kinds = [d["kind"] for d in docs]
-    assert "ConfigMap" in kinds
+    assert len(docs) == 2  # ConfigMap + stub placeholder
+    configmap = next(d for d in docs if d["kind"] == "ConfigMap" and not d["metadata"]["name"].endswith("-https-stub"))
+    assert "AGENT.md" in configmap["data"]
+    assert "mcp.json" in configmap["data"]
 
 
 def test_dispatch_queue_stub_emits_configmap():
-    """render_queue stub returns a ConfigMap (+ marker); does not raise."""
+    """render_queue stub returns exactly 1 ConfigMap with AGENT.md and mcp.json; does not raise."""
     config = _make_config({"name": "queue-agent"})
     config["trigger"] = {
         "kind": "queue",
         "runtime": {"timezone": "UTC", "activeDeadlineSeconds": 1800, "backoffLimit": 1},
     }
     docs = da.render_queue(config, MINIMAL_PROMPT)
-    kinds = [d["kind"] for d in docs]
-    assert "ConfigMap" in kinds
+    assert len(docs) == 2  # ConfigMap + stub placeholder
+    configmap = next(d for d in docs if d["kind"] == "ConfigMap" and not d["metadata"]["name"].endswith("-queue-stub"))
+    assert "AGENT.md" in configmap["data"]
+    assert "mcp.json" in configmap["data"]
 
 
 # ---------------------------------------------------------------------------
