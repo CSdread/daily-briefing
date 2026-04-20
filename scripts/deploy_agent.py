@@ -78,8 +78,24 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _validate_agent_name(name: str) -> None:
+    """Exit with an error if the agent name exceeds 42 characters.
+
+    The longest derived resource name is '<agent>-idm-<16hex>' = len(agent) + 21.
+    Kubernetes limits resource names to 63 characters, so: 63 - 21 = 42.
+    """
+    if len(name) > 42:
+        print(
+            f"ERROR: agent name '{name}' exceeds 42 characters "
+            "(max derivable Job name: <agent>-idm-<16hex> must be ≤ 63 chars)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def load_config(agent_name: str) -> tuple[dict, str]:
     """Load and merge agent.yaml with defaults. Returns (config, prompt_text)."""
+    _validate_agent_name(agent_name)
     agent_dir = REPO_ROOT / "prompts" / agent_name
     yaml_path = agent_dir / "agent.yaml"
     md_path = agent_dir / "AGENT.md"
@@ -575,6 +591,13 @@ def main() -> None:
     mode.add_argument("--config-only", action="store_true", help="Apply ConfigMap only")
     mode.add_argument("--run", action="store_true", help="Delete + apply manual Job")
     args = parser.parse_args()
+    if len(args.agent) > 42:
+        print(
+            f"ERROR: agent name '{args.agent}' exceeds 42 characters "
+            "(max derivable Job name: <agent>-idm-<16hex> must be ≤ 63 chars)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     config, prompt = load_config(args.agent)
     skills = load_skills(config)

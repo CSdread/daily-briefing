@@ -109,7 +109,7 @@ secrets: []
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `name` | Yes | — | Agent name; used for all k8s resource names (`<name>-config`, `<name>-manual`, `agent-<name>`) |
+| `name` | Yes | — | Agent name; used for all k8s resource names (`<name>-config`, `<name>-manual`, `agent-<name>`). Maximum 42 characters (longest derived name `<name>-idm-<16hex>` must fit in the 63-char Kubernetes limit). |
 | `type` | No | `cron` | `cron` runs as a Kubernetes CronJob. `service` (future) will run as a long-lived Deployment. |
 | `model` | No | `claude-opus-4-6` | Claude model ID passed to the Anthropic API |
 | `runner.maxTokens` | No | `8192` | `max_tokens` per API call |

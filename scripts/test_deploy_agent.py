@@ -72,6 +72,19 @@ def _make_config(raw: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Agent-name validation tests
+# ---------------------------------------------------------------------------
+
+def test_agent_name_length_validation(tmp_path, monkeypatch):
+    """Agent name > 42 chars → SystemExit from load_config."""
+    long_name = "a" * 43
+    _write_agent(tmp_path, f"name: {long_name}\n")
+    monkeypatch.setattr(da, "REPO_ROOT", tmp_path)
+    with pytest.raises(SystemExit):
+        da.load_config(long_name)
+
+
+# ---------------------------------------------------------------------------
 # Legacy shim tests
 # ---------------------------------------------------------------------------
 
