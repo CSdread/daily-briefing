@@ -199,29 +199,43 @@ def test_dispatch_manual_emits_configmap_only():
 
 
 def test_dispatch_https_stub_emits_configmap():
-    """render_https stub returns exactly 1 ConfigMap with AGENT.md and mcp.json; does not raise."""
+    """render_https stub returns exactly 2 docs: 1 agent ConfigMap + 1 stub placeholder.
+
+    The agent ConfigMap must contain AGENT.md and mcp.json.
+    """
     config = _make_config({"name": "https-agent"})
     config["trigger"] = {
         "kind": "https",
         "runtime": {"timezone": "UTC", "activeDeadlineSeconds": 1800, "backoffLimit": 1},
     }
     docs = da.render_https(config, MINIMAL_PROMPT)
-    assert len(docs) == 2  # ConfigMap + stub placeholder
-    configmap = next(d for d in docs if d["kind"] == "ConfigMap" and not d["metadata"]["name"].endswith("-https-stub"))
+    assert len(docs) == 2  # agent ConfigMap + stub placeholder
+    # Identify the agent ConfigMap (not the -https-stub placeholder).
+    configmap = next(
+        d for d in docs
+        if d["kind"] == "ConfigMap" and not d["metadata"]["name"].endswith("-https-stub")
+    )
     assert "AGENT.md" in configmap["data"]
     assert "mcp.json" in configmap["data"]
 
 
 def test_dispatch_queue_stub_emits_configmap():
-    """render_queue stub returns exactly 1 ConfigMap with AGENT.md and mcp.json; does not raise."""
+    """render_queue stub returns exactly 2 docs: 1 agent ConfigMap + 1 stub placeholder.
+
+    The agent ConfigMap must contain AGENT.md and mcp.json.
+    """
     config = _make_config({"name": "queue-agent"})
     config["trigger"] = {
         "kind": "queue",
         "runtime": {"timezone": "UTC", "activeDeadlineSeconds": 1800, "backoffLimit": 1},
     }
     docs = da.render_queue(config, MINIMAL_PROMPT)
-    assert len(docs) == 2  # ConfigMap + stub placeholder
-    configmap = next(d for d in docs if d["kind"] == "ConfigMap" and not d["metadata"]["name"].endswith("-queue-stub"))
+    assert len(docs) == 2  # agent ConfigMap + stub placeholder
+    # Identify the agent ConfigMap (not the -queue-stub placeholder).
+    configmap = next(
+        d for d in docs
+        if d["kind"] == "ConfigMap" and not d["metadata"]["name"].endswith("-queue-stub")
+    )
     assert "AGENT.md" in configmap["data"]
     assert "mcp.json" in configmap["data"]
 
