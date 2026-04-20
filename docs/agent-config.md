@@ -8,12 +8,16 @@ resources — no per-agent k8s directory is needed.
 
 ```yaml
 name: my-agent
-cron:
-  schedule: "0 9 * * 1-5"
+trigger:
+  kind: cron
+  cron:
+    schedule: "0 9 * * 1-5"
 ```
 
-`name` is always required. `cron.schedule` is required when `type: cron` (the
-default). Everything else uses the defaults listed below.
+`name` is always required. `trigger.cron.schedule` is required when
+`trigger.kind: cron`. Everything else uses the defaults listed below. The legacy
+`cron:` form (without the `trigger:` wrapper) still works but emits a
+`DeprecationWarning`.
 
 ## Full schema with defaults
 
@@ -110,19 +114,23 @@ secrets: []
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `name` | Yes | — | Agent name; used for all k8s resource names (`<name>-config`, `<name>-manual`, `agent-<name>`). Maximum 42 characters (longest derived name `<name>-idm-<16hex>` must fit in the 63-char Kubernetes limit). |
-| `type` | No | `cron` | `cron` runs as a Kubernetes CronJob. `service` (future) will run as a long-lived Deployment. |
+| `trigger.kind` | No | `manual` | `cron` \| `https` \| `queue` \| `manual`. Determines which Kubernetes resources are generated. |
+| `trigger.runtime.timezone` | No | `UTC` | IANA timezone string; sets `TZ` env var inside the pod and the CronJob `timeZone` field. |
+| `trigger.runtime.activeDeadlineSeconds` | No | `1800` | Hard pod kill timeout (30 min); prevents infinite loops from consuming resources. |
+| `trigger.runtime.backoffLimit` | No | `1` | Pod retry count on failure. |
+| `type` | No | `cron` | **Deprecated** — use `trigger.kind` instead. `cron` runs as a Kubernetes CronJob. `service` (future) will run as a long-lived Deployment. |
 | `model` | No | `claude-opus-4-6` | Claude model ID passed to the Anthropic API |
 | `runner.maxTokens` | No | `8192` | `max_tokens` per API call |
 | `runner.maxTurns` | No | `50` | Max loop iterations; agent exits with a warning if reached |
 | `runner.turnDelay` | No | `15` | Seconds between turns; prevents RPM rate limit hits |
 | `runner.toolResultMaxChars` | No | `3000` | Tool results longer than this are truncated before being sent back to Claude |
-| `cron.schedule` | Yes (cron) | — | Standard 5-field cron expression |
-| `cron.timezone` | No | `UTC` | IANA timezone for schedule evaluation and `TZ` env var inside the pod |
-| `cron.concurrencyPolicy` | No | `Forbid` | What to do if a job is still running when the next one fires |
-| `cron.activeDeadlineSeconds` | No | `1800` | Hard pod kill timeout; prevents infinite loops from consuming resources |
-| `cron.backoffLimit` | No | `1` | Pod retry count on failure |
-| `cron.successfulJobsHistoryLimit` | No | `50` | Completed pods to retain for inspection |
-| `cron.failedJobsHistoryLimit` | No | `50` | Failed pods to retain for inspection |
+| `cron.schedule` | Yes (cron) | — | **Deprecated** — use `trigger.cron.schedule`. Standard 5-field cron expression. |
+| `cron.timezone` | No | `UTC` | **Deprecated** — use `trigger.runtime.timezone`. IANA timezone for schedule evaluation and `TZ` env var inside the pod. |
+| `cron.concurrencyPolicy` | No | `Forbid` | **Deprecated** — use `trigger.cron.concurrencyPolicy`. What to do if a job is still running when the next one fires. |
+| `cron.activeDeadlineSeconds` | No | `1800` | **Deprecated** — use `trigger.runtime.activeDeadlineSeconds`. Hard pod kill timeout. |
+| `cron.backoffLimit` | No | `1` | **Deprecated** — use `trigger.runtime.backoffLimit`. Pod retry count on failure. |
+| `cron.successfulJobsHistoryLimit` | No | `50` | **Deprecated** — use `trigger.cron.successfulJobsHistoryLimit`. Completed pods to retain for inspection. |
+| `cron.failedJobsHistoryLimit` | No | `50` | **Deprecated** — use `trigger.cron.failedJobsHistoryLimit`. Failed pods to retain for inspection. |
 | `resources.requests.cpu` | No | `100m` | CPU request |
 | `resources.requests.memory` | No | `256Mi` | Memory request |
 | `resources.limits.cpu` | No | `500m` | CPU limit |

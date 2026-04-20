@@ -27,7 +27,7 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    print("ERROR: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
+    print("ERROR: PyYAML is required. Install with: uv add pyyaml", file=sys.stderr)
     sys.exit(1)
 
 REPO_ROOT = Path(__file__).parent.parent
