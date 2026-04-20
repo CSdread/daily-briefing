@@ -449,10 +449,8 @@ def render_cron(config: dict, prompt: str, skills: dict[str, str] | None = None)
     ]
 
 
-# Phase D-6 / E-6 must modify ONLY this stub. Do not touch render_cron, render_manual,
-# or render_manifests dispatcher from those tasks.
-# STUB — phase D fills this in. Do not modify this file's render_cron, render_manual,
-# or render_manifests dispatcher from those tasks.
+# Phase D must modify ONLY this stub. Do not touch render_cron, render_manual,
+# or render_manifests dispatcher from Phase D tasks.
 def render_https(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
     """Render manifests for trigger.kind: https (STUB — Phase D fills this in).
 
@@ -480,10 +478,8 @@ def render_https(config: dict, prompt: str, skills: dict[str, str] | None = None
     return [configmap, placeholder]
 
 
-# Phase D-6 / E-6 must modify ONLY this stub. Do not touch render_cron, render_manual,
-# or render_manifests dispatcher from those tasks.
-# STUB — phase E fills this in. Do not modify this file's render_cron, render_manual,
-# or render_manifests dispatcher from those tasks.
+# Phase E must modify ONLY this stub. Do not touch render_cron, render_manual,
+# or render_manifests dispatcher from Phase E tasks.
 def render_queue(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
     """Render manifests for trigger.kind: queue (STUB — Phase E fills this in).
 
