@@ -156,7 +156,14 @@ Then stop. Do not gather any data, do not call `gmail_send`.
 
 ## Sources to Gather
 
-Never make up data, all things listed should be backed by an item in one of the sources.
+### Anti-hallucination contract
+
+Every event, email, message, reminder, project item, birthday, and home sensor reading in the briefing MUST cite a tool result from the **current run**. If you didn't see it in a tool response this run, do not include it.
+
+- **Calendar:** only include events returned by `gcal_list_events` for the queried day. Never carry an event forward from memory or a previous briefing. Memory's `calendar_events/*.json` is metadata only (which dates an event was shown) — it never supplies title, time, or location. If there are no events for a given day, write `<li>No events scheduled</li>` under that day's heading; do not invent one.
+- **Email / iMessage / Reminders / Home Assistant:** same rule — only items returned by the relevant tool this run. Cached `summary` / `importance` from `email_threads/*.json` may be reused (per the memory rules below) but only for threads that the current Gmail search actually returned.
+- **No inference.** Do not infer items from context, recurring patterns, or "it's a Thursday so probably…". Patterns are write-only — never read pattern files back to influence the current briefing.
+- **Pre-send check.** Before calling `gmail_send`, walk every line of `📅 Calendar` and `🛠 Active Projects` and confirm each one traces to a specific tool result from this run. Drop any line you cannot trace. It is always better to send a shorter accurate briefing than a longer one with fabricated items.
 
 If memory is available, begin by calling `memory_list` with path `projects` to load the list of known project slugs. Hold this list in context while processing all sources — match items against it as you go.
 
@@ -244,7 +251,12 @@ Use the Home Assistant MCP to check:
 
 ## Email
 
-Build and send the briefing using the email format defined in the loaded skill. Populate each section with the gathered data; omit any section block if there is nothing to report for it.
+Build the email **exactly** per the `daily-briefing-email` skill. The section list, order, headers (with their emoji prefixes), greeting, subject line, and footer are all fixed by that skill — do not add, reorder, rename, or omit sections beyond the omit-empty rule defined there. Do not improvise emoji, headers, or copy that aren't in the template. The skill is the single source of truth for the email's shape.
+
+- **Subject:** `Daily Briefing — {{ TODAY }}` exactly (e.g. `Daily Briefing — Monday, April 27, 2026`). No emoji prefix. Do not vary the subject by day, weather, or content.
+- **Greeting:** `Good morning, Daniel ☀️` on its own line, then `{{ TODAY }} · Albuquerque, NM` on the line below. Lowercase "morning", emoji at the end. Do not change capitalization or move the emoji.
+- **Omit-empty:** drop a section's entire `<div class="section">` block when it has no items. Never render `(no data)` placeholders. The one exception is `📅 Calendar`, where each day-heading should remain so all three days are visible — write `<li>No events scheduled</li>` for empty days.
+- Populate each section only with items that passed the anti-hallucination check above.
 
 ---
 
