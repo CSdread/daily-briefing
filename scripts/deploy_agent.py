@@ -21,12 +21,13 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 try:
     import yaml
 except ImportError:
-    print("ERROR: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
+    print("ERROR: PyYAML is required. Install with: uv add pyyaml", file=sys.stderr)
     sys.exit(1)
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -35,7 +36,6 @@ RUNNER_IMAGE = "csdread/agent-runner"
 
 # Defaults for all optional fields
 DEFAULTS = {
-    "type": "cron",
     "model": "claude-opus-4-6",
     "runner": {
         "maxTokens": 8192,
@@ -48,8 +48,8 @@ DEFAULTS = {
         "concurrencyPolicy": "Forbid",
         "activeDeadlineSeconds": 1800,
         "backoffLimit": 1,
-        "successfulJobsHistoryLimit": 3,
-        "failedJobsHistoryLimit": 3,
+        "successfulJobsHistoryLimit": 50,
+        "failedJobsHistoryLimit": 50,
     },
     "resources": {
         "requests": {"cpu": "100m", "memory": "256Mi"},
@@ -78,8 +78,24 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _validate_agent_name(name: str) -> None:
+    """Exit with an error if the agent name exceeds 42 characters.
+
+    The longest derived resource name is '<agent>-idm-<16hex>' = len(agent) + 21.
+    Kubernetes limits resource names to 63 characters, so: 63 - 21 = 42.
+    """
+    if len(name) > 42:
+        print(
+            f"ERROR: agent name '{name}' exceeds 42 characters "
+            "(max derivable Job name: <agent>-idm-<16hex> must be ≤ 63 chars)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def load_config(agent_name: str) -> tuple[dict, str]:
     """Load and merge agent.yaml with defaults. Returns (config, prompt_text)."""
+    _validate_agent_name(agent_name)
     agent_dir = REPO_ROOT / "prompts" / agent_name
     yaml_path = agent_dir / "agent.yaml"
     md_path = agent_dir / "AGENT.md"
@@ -98,9 +114,81 @@ def load_config(agent_name: str) -> tuple[dict, str]:
 
     config = deep_merge(DEFAULTS, raw)
 
-    if config["type"] == "cron" and not config.get("cron", {}).get("schedule"):
-        print("ERROR: agent.yaml must specify cron.schedule for type: cron", file=sys.stderr)
-        sys.exit(1)
+    # ── Legacy shim ──────────────────────────────────────────────────────────
+    # Normalise old-style `type: cron` + root `cron:` block into the canonical
+    # `trigger:` block so all downstream code can read from trigger.* uniformly.
+    # Keep config["cron"] populated for any stale readers within this phase.
+    if "trigger" not in config:
+        raw_cron = config.get("cron", {})
+        legacy_schedule = raw_cron.get("schedule")
+        if config.get("type") == "cron" and (
+            not isinstance(legacy_schedule, str) or not legacy_schedule.strip()
+        ):
+            print("ERROR: agent.yaml must specify cron.schedule for type: cron", file=sys.stderr)
+            sys.exit(1)
+        has_cron_block = bool(raw_cron.get("schedule"))
+        if has_cron_block:
+            warnings.warn(
+                f"Agent '{config['name']}': top-level 'cron:' block is deprecated. "
+                "Use 'trigger: {{kind: cron, runtime: {{...}}, cron: {{...}}}}' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            config["trigger"] = {
+                "kind": "cron",
+                "runtime": {
+                    "timezone": raw_cron.get("timezone", "UTC"),
+                    "activeDeadlineSeconds": raw_cron.get("activeDeadlineSeconds", 1800),
+                    "backoffLimit": raw_cron.get("backoffLimit", 1),
+                },
+                "cron": {
+                    "schedule": raw_cron["schedule"],
+                    "concurrencyPolicy": raw_cron.get("concurrencyPolicy", "Forbid"),
+                    "successfulJobsHistoryLimit": raw_cron.get("successfulJobsHistoryLimit", 50),
+                    "failedJobsHistoryLimit": raw_cron.get("failedJobsHistoryLimit", 50),
+                },
+            }
+        else:
+            warnings.warn(
+                f"Agent '{config['name']}': no 'trigger' or 'cron' block found. "
+                "Defaulting to trigger.kind: manual.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            config["trigger"] = {"kind": "manual", "runtime": {}, "manual": {}}
+
+    # Ensure trigger.runtime always exists with defaults filled in.
+    trigger = config["trigger"]
+    trigger.setdefault("runtime", {})
+    trigger["runtime"].setdefault("timezone", "UTC")
+    trigger["runtime"].setdefault("activeDeadlineSeconds", 1800)
+    trigger["runtime"].setdefault("backoffLimit", 1)
+
+    # Validate cron schedule when kind is cron.
+    if trigger["kind"] == "cron":
+        schedule = trigger.get("cron", {}).get("schedule") or config.get("cron", {}).get("schedule")
+        if not isinstance(schedule, str) or not schedule.strip():
+            print(
+                "ERROR: agent.yaml trigger.cron.schedule must be a non-empty cron expression",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # Ensure trigger.cron sub-block exists with defaults.
+        trigger.setdefault("cron", {})
+        raw_cron = config.get("cron", {})
+        trigger["cron"].setdefault("schedule", raw_cron.get("schedule", ""))
+        trigger["cron"].setdefault("concurrencyPolicy", raw_cron.get("concurrencyPolicy", "Forbid"))
+        trigger["cron"].setdefault("successfulJobsHistoryLimit", raw_cron.get("successfulJobsHistoryLimit", 50))
+        trigger["cron"].setdefault("failedJobsHistoryLimit", raw_cron.get("failedJobsHistoryLimit", 50))
+        # Keep config["cron"] in sync for stale readers within this phase.
+        config["cron"]["timezone"] = trigger["runtime"]["timezone"]
+        config["cron"]["activeDeadlineSeconds"] = trigger["runtime"]["activeDeadlineSeconds"]
+        config["cron"]["backoffLimit"] = trigger["runtime"]["backoffLimit"]
+        config["cron"]["schedule"] = trigger["cron"]["schedule"]
+        config["cron"]["concurrencyPolicy"] = trigger["cron"]["concurrencyPolicy"]
+        config["cron"]["successfulJobsHistoryLimit"] = trigger["cron"]["successfulJobsHistoryLimit"]
+        config["cron"]["failedJobsHistoryLimit"] = trigger["cron"]["failedJobsHistoryLimit"]
+    # ── End legacy shim ──────────────────────────────────────────────────────
 
     return config, md_path.read_text()
 
@@ -142,7 +230,24 @@ def load_skills(config: dict) -> dict[str, str]:
     return result
 
 
-def build_configmap(config: dict, prompt: str, skills: dict[str, str] | None = None) -> dict:
+def build_configmap(
+    config: dict,
+    prompt: str,
+    skills: dict[str, str] | None = None,
+    extra_data: dict[str, str] | None = None,
+) -> dict:
+    """Build the agent ConfigMap manifest.
+
+    Args:
+        config:     Merged agent configuration dict.
+        prompt:     Contents of AGENT.md.
+        skills:     Optional mapping of skill_name → markdown text; each entry is
+                    stored as ``skill_<name>.md`` in the ConfigMap.
+        extra_data: Optional additional key→value pairs merged into ``data`` after
+                    skills are applied.  Intended for Phase D/E to attach per-trigger
+                    config (e.g. ``trigger.json``) without modifying this function's
+                    signature again.
+    """
     name = config["name"]
     mcp_json = mcp_servers_to_json(config["mcpServers"])
     data: dict[str, str] = {"AGENT.md": prompt, "mcp.json": mcp_json}
@@ -150,6 +255,8 @@ def build_configmap(config: dict, prompt: str, skills: dict[str, str] | None = N
     # and injects them as separate system prompt blocks before AGENT.md.
     for skill_name, skill_content in (skills or {}).items():
         data[f"skill_{skill_name}.md"] = skill_content
+    if extra_data:
+        data.update(extra_data)
     return {
         "apiVersion": "v1",
         "kind": "ConfigMap",
@@ -161,11 +268,16 @@ def build_configmap(config: dict, prompt: str, skills: dict[str, str] | None = N
     }
 
 
-def build_pod_spec(config: dict) -> dict:
+def build_pod_spec(config: dict, trigger_env: list[dict] | None = None) -> dict:
     name = config["name"]
     runner = config["runner"]
     resources = config["resources"]
     tag = runner_image_tag()
+
+    # Read timezone from trigger.runtime (canonical path); fall back to legacy cron block.
+    timezone = config.get("trigger", {}).get("runtime", {}).get(
+        "timezone", config.get("cron", {}).get("timezone", "UTC")
+    )
 
     env = [
         {
@@ -179,8 +291,11 @@ def build_pod_spec(config: dict) -> dict:
         {"name": "MAX_TURNS", "value": str(runner["maxTurns"])},
         {"name": "TURN_DELAY", "value": str(runner["turnDelay"])},
         {"name": "TOOL_RESULT_MAX_CHARS", "value": str(runner["toolResultMaxChars"])},
-        {"name": "TZ", "value": config["cron"].get("timezone", "UTC")},
+        {"name": "TZ", "value": timezone},
     ]
+
+    if trigger_env:
+        env.extend(trigger_env)
 
     for secret in config["secrets"]:
         env.append({
@@ -233,8 +348,16 @@ def build_pod_spec(config: dict) -> dict:
 
 def build_cronjob(config: dict) -> dict:
     name = config["name"]
-    cron = config["cron"]
+    trigger = config["trigger"]
+    runtime = trigger["runtime"]
+    cron = trigger["cron"]
     pod_spec = build_pod_spec(config)
+
+    platform_labels = {
+        "agent": name,
+        "trigger-kind": "cron",
+        "managed-by": "agent-platform",
+    }
 
     return {
         "apiVersion": "batch/v1",
@@ -242,34 +365,43 @@ def build_cronjob(config: dict) -> dict:
         "metadata": {
             "name": name,
             "namespace": NAMESPACE,
-            "labels": {"app": name, "type": "agent"},
+            "labels": {"app": name, "type": "agent", **platform_labels},
         },
         "spec": {
             "schedule": cron["schedule"],
-            "timeZone": cron["timezone"],
+            "timeZone": runtime["timezone"],
             "concurrencyPolicy": cron["concurrencyPolicy"],
             "successfulJobsHistoryLimit": cron["successfulJobsHistoryLimit"],
             "failedJobsHistoryLimit": cron["failedJobsHistoryLimit"],
             "jobTemplate": {
+                "metadata": {
+                    "labels": {"app": name, "type": "agent-job", **platform_labels},
+                },
                 "spec": {
-                    "activeDeadlineSeconds": cron["activeDeadlineSeconds"],
-                    "backoffLimit": cron["backoffLimit"],
+                    "activeDeadlineSeconds": runtime["activeDeadlineSeconds"],
+                    "backoffLimit": runtime["backoffLimit"],
                     "template": {
                         "metadata": {
-                            "labels": {"app": name, "type": "agent-job"},
+                            "labels": {"app": name, "type": "agent-job", **platform_labels},
                         },
                         "spec": pod_spec,
                     },
-                }
+                },
             },
         },
     }
 
 
-def build_manual_job(config: dict) -> dict:
+def build_manual_job(config: dict, trigger_kind: str = "cron") -> dict:
     name = config["name"]
-    cron = config["cron"]
+    runtime = config["trigger"]["runtime"]
     pod_spec = build_pod_spec(config)
+
+    platform_labels = {
+        "agent": name,
+        "trigger-kind": trigger_kind,
+        "managed-by": "agent-platform",
+    }
 
     return {
         "apiVersion": "batch/v1",
@@ -277,14 +409,14 @@ def build_manual_job(config: dict) -> dict:
         "metadata": {
             "name": f"{name}-manual",
             "namespace": NAMESPACE,
-            "labels": {"app": name, "type": "agent-job"},
+            "labels": {"app": name, "type": "agent-job", **platform_labels},
         },
         "spec": {
-            "activeDeadlineSeconds": cron["activeDeadlineSeconds"],
-            "backoffLimit": cron["backoffLimit"],
+            "activeDeadlineSeconds": runtime["activeDeadlineSeconds"],
+            "backoffLimit": runtime["backoffLimit"],
             "template": {
                 "metadata": {
-                    "labels": {"app": name, "type": "agent-job"},
+                    "labels": {"app": name, "type": "agent-job", **platform_labels},
                 },
                 "spec": pod_spec,
             },
@@ -334,12 +466,98 @@ def build_storage(config: dict) -> list[dict]:
     return [pv, pvc]
 
 
-def render_manifests(config: dict, prompt: str, skills: dict[str, str] | None = None, include_storage: bool = True) -> str:
-    docs = [build_configmap(config, prompt, skills)]
+def render_cron(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: cron. Returns ConfigMap + CronJob + manual Job."""
+    return [
+        build_configmap(config, prompt, skills),
+        build_cronjob(config),
+        build_manual_job(config, trigger_kind="cron"),
+    ]
 
-    if config["type"] == "cron":
-        docs.append(build_cronjob(config))
-        docs.append(build_manual_job(config))
+
+# Phase D must modify ONLY this stub. Do not touch render_cron, render_manual,
+# or render_manifests dispatcher from Phase D tasks.
+def render_https(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: https (STUB — Phase D fills this in).
+
+    Returns ConfigMap plus a commented-out placeholder marker. Does not fail.
+    """
+    configmap = build_configmap(config, prompt, skills)
+    placeholder = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": f"{config['name']}-https-stub",
+            "namespace": NAMESPACE,
+            "annotations": {
+                "agent-platform/stub": "true",
+                "agent-platform/phase": "D",
+            },
+        },
+        "data": {
+            "README": (
+                "# STUB — phase D fills this in.\n"
+                "Do not modify render_cron, render_manual, or render_manifests dispatcher.\n"
+            ),
+        },
+    }
+    return [configmap, placeholder]
+
+
+# Phase E must modify ONLY this stub. Do not touch render_cron, render_manual,
+# or render_manifests dispatcher from Phase E tasks.
+def render_queue(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: queue (STUB — Phase E fills this in).
+
+    Returns ConfigMap plus a commented-out placeholder marker. Does not fail.
+    """
+    configmap = build_configmap(config, prompt, skills)
+    placeholder = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": f"{config['name']}-queue-stub",
+            "namespace": NAMESPACE,
+            "annotations": {
+                "agent-platform/stub": "true",
+                "agent-platform/phase": "E",
+            },
+        },
+        "data": {
+            "README": (
+                "# STUB — phase E fills this in.\n"
+                "Do not modify render_cron, render_manual, or render_manifests dispatcher.\n"
+            ),
+        },
+    }
+    return [configmap, placeholder]
+
+
+def render_manual(config: dict, prompt: str, skills: dict[str, str] | None = None) -> list[dict]:
+    """Render manifests for trigger.kind: manual. Returns only the ConfigMap.
+
+    Jobs for manual-only agents are created on-demand by the control-plane.
+    """
+    return [build_configmap(config, prompt, skills)]
+
+
+def render_manifests(config: dict, prompt: str, skills: dict[str, str] | None = None, include_storage: bool = True) -> str:
+    """Dispatch to the appropriate render_* function based on trigger.kind."""
+    kind = config["trigger"]["kind"]
+
+    _dispatch = {
+        "cron": render_cron,
+        "https": render_https,
+        "queue": render_queue,
+        "manual": render_manual,
+    }
+
+    render_fn = _dispatch.get(kind)
+    if render_fn is None:
+        print(f"ERROR: unknown trigger.kind '{kind}'", file=sys.stderr)
+        sys.exit(1)
+
+    docs = render_fn(config, prompt, skills)
 
     if include_storage and config["memory"]["enabled"]:
         mem = config["memory"]
@@ -347,7 +565,7 @@ def render_manifests(config: dict, prompt: str, skills: dict[str, str] | None = 
             print("ERROR: memory.nfsServer and memory.nfsPath are required when memory.enabled: true",
                   file=sys.stderr)
             sys.exit(1)
-        docs.extend(build_storage(config))
+        docs = list(docs) + build_storage(config)
 
     return "---\n" + "\n---\n".join(
         yaml.dump(doc, default_flow_style=False, sort_keys=False) for doc in docs
@@ -407,7 +625,7 @@ def main() -> None:
         # Delete the manual Job before applying — its pod template spec is immutable,
         # so kubectl apply fails if the image tag changed. --run handles this already;
         # mirror that behaviour here.
-        if config["type"] == "cron":
+        if config["trigger"]["kind"] == "cron":
             job_name = f"{config['name']}-manual"
             subprocess.run(
                 ["kubectl", "delete", "job", job_name, "-n", NAMESPACE, "--ignore-not-found"],
